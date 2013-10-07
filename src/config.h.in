@@ -1,0 +1,16 @@
+#ifndef _DURKA_CONFIG
+#define _DURKA_CONFIG
+
+#define VERSION "@DURKA_VERSION@"
+
+#define GETTEXT_PACKAGE
+#cmakedefine ENABLE_DEBUG
+
+#ifndef ENABLE_DEBUG
+#  define NDEBUG
+#  define G_DISABLE_ASSERT
+#else
+#endif
+
+#endif /* _DURKA_CONFIG */
+

@@ -1,0 +1,8 @@
+[ConnectionManager]
+Name = durka
+BusName = org.freedesktop.Telepathy.ConnectionManager.durka
+ObjectPath = /org/freedesktop/Telepathy/ConnectionManager/durka
+Interfaces=
+
+[Protocol vk]
+param-account = s required secret
