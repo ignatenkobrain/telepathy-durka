@@ -48,11 +48,25 @@ account_param_filter (const TpCMParamSpec *paramspec,
 }
 
 static const TpCMParamSpec durka_params[] = {
-  { "account", "s", G_TYPE_STRING,    /* account is token */
+  { "account", "s", G_TYPE_STRING,
     TP_CONN_MGR_PARAM_FLAG_REQUIRED | TP_CONN_MGR_PARAM_FLAG_REGISTER,
     NULL,
     0,
     account_param_filter,
+    NULL,
+    NULL },
+  { "password", "s", G_TYPE_STRING,
+    TP_CONN_MGR_PARAM_FLAG_REQUIRED | TP_CONN_MGR_PARAM_FLAG_REGISTER | TP_CONN_MGR_PARAM_FLAG_SECRET,
+    NULL,
+    0,
+    NULL,
+    NULL,
+    NULL },
+  { "token", "s", G_TYPE_STRING,
+    TP_CONN_MGR_PARAM_FLAG_SECRET,
+    NULL,
+    0,
+    NULL,
     NULL,
     NULL },
   { NULL }
@@ -71,8 +85,12 @@ new_connection (TpBaseProtocol *protocol,
 {
   DurkaConnection *conn;
   const gchar *account;
+  const gchar *password;
+  const gchar *token;
 
   account = tp_asv_get_string (asv, "account");
+  password = tp_asv_get_string (asv, "password");
+  token = tp_asv_get_string (asv, "token");
   /* telepathy-glib checked this for us */
   g_assert (account != NULL);
 
@@ -80,6 +98,8 @@ new_connection (TpBaseProtocol *protocol,
       g_object_new (DURKA_TYPE_CONNECTION,
         "account", account,
         "protocol", tp_base_protocol_get_name (protocol),
+        "password", password,
+        "token", token,
         NULL));
 
   return (TpBaseConnection *) conn;
