@@ -334,6 +334,25 @@ create_channel_managers (TpBaseConnection *conn)
   return ret;
 }
 
+
+json_value *json_value_find (json_value *parent, gchar *name)
+{
+    int i;
+
+    if (parent == NULL)
+        return NULL;
+
+    if (parent->type == json_object)
+        for (i = 0; i < (int)parent->u.object.length; i++)
+        {
+            if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
+                return parent->u.object.values[i].value;
+        }
+
+    return NULL;
+}
+
+
 typedef struct
 {
   RestProxy *proxy;
@@ -382,11 +401,12 @@ invoke_vk_api (DurkaConnection *self, gchar *method, json_value **response, GErr
   if (*error)
     g_error_free (*error);
 
-  if (g_strcmp0 ((*response)->u.object.values[0].name, "response") == 0)
+  if  (json_value_find(*response, "response"))
     return 0;
 
-  *error = g_error_new (1, (*response)->u.object.values[0].value->u.object.values[0].value->u.integer,
-                       "%s", (*response)->u.object.values[0].value->u.object.values[1].value->u.string.ptr);
+  json_value *l_error = json_value_find(*response, "error");
+  *error = g_error_new (1, json_value_find(l_error,"error_code")->u.integer,
+                       "%s", json_value_find(l_error,"error_msg")->u.string.ptr);
   return (*error)->code;
 }
 
@@ -405,21 +425,19 @@ request_long_poll_data (DurkaConnection *self,
       *data = p_data;
     }
 
-    g_assert ((*parsed)->type == json_object);
-    json_value *response = (*parsed)->u.object.values[0].value;
+    json_value *response;
+    json_value *temp;
+    response = json_value_find(*parsed, "response");
 
-    g_assert (g_strcmp0 (response->u.object.values[0].name, "key") == 0);
-    g_assert (response->u.object.values[0].value->type == json_string);
-    (*data)->key = g_strdup (response->u.object.values[0].value->u.string.ptr);
+    g_assert ((temp = json_value_find(response,"key")) != NULL);
+    (*data)->key = g_strdup (temp->u.string.ptr);
 
-    g_assert (g_strcmp0 (response->u.object.values[1].name, "server") == 0);
-    g_assert (response->u.object.values[1].value->type == json_string);
-    gchar *url = g_strdup_printf ("http://%s", response->u.object.values[1].value->u.string.ptr);
+    g_assert ((temp = json_value_find(response,"server")) != NULL);
+    gchar *url = g_strdup_printf ("http://%s", temp->u.string.ptr);
     (*data)->proxy = rest_proxy_new (url, FALSE);
 
-    g_assert (g_strcmp0 (response->u.object.values[2].name, "ts") == 0);
-    g_assert (response->u.object.values[2].value->type == json_integer);
-    (*data)->ts = g_strdup_printf ("%li", response->u.object.values[2].value->u.integer);
+    g_assert ((temp = json_value_find(response,"ts")) != NULL);
+    (*data)->ts = g_strdup_printf ("%li", temp->u.integer);
 
     return 0;
   }
@@ -444,18 +462,20 @@ long_poll_listener (RestProxyCall *call,
     g_print ("ret: %s\n", ret);
 
     json_value *parsed = json_parse (ret, strlen (ret));
+    json_value *updates;
     g_object_unref (call);
 
-    if (g_strcmp0 (parsed->u.object.values[0].name, "failed") != 0) {
+    if (json_value_find(parsed, "failed") == NULL) {
       g_free (poll->ts);
-      poll->ts = g_strdup_printf ("%li", parsed->u.object.values[0].value->u.integer);
+      poll->ts = g_strdup_printf ("%li", json_value_find(parsed, "ts")->u.integer);
 
-      if (parsed->u.object.values[1].value->u.object.length == 0)
+      updates = json_value_find(parsed, "updates");
+      if (updates->u.array.length == 0)
         g_print ("no events.\n");
       else {
         gint i;
-        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.array.length; i++) {
-          json_value *event = parsed->u.object.values[1].value->u.array.values[i];
+        for (i = 0; i < (gint) updates->u.array.length; i++) {
+          json_value *event = updates->u.array.values[i];
           event_code = event->u.array.values[0]->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
@@ -509,6 +529,9 @@ long_poll_listener (RestProxyCall *call,
             break;
           case 70:
             g_print ("someone is calling,");
+            break;
+          case 101:
+            g_print ("pavel durov is an idiot,");
             break;
           default:
             g_print ("meteorite%i?,", event_code);
