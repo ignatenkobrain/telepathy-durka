@@ -65,11 +65,13 @@ G_DEFINE_TYPE (DurkaProxyCall, durka_proxy_call, REST_TYPE_PROXY_CALL)
 
 
 static void
-hash_append_foreach ( gpointer name, gpointer value, gpointer str)
+hash_append_foreach (gpointer name,
+                     gpointer value,
+                     gpointer str)
 {
   GString *l_str = str;
-  const char * l_name = name;
-  const char * l_value = value;
+  const gchar *l_name = name;
+  const gchar *l_value = value;
 
   if (l_str->len)
     g_string_append_c (l_str, '&');
@@ -341,7 +343,7 @@ typedef struct
 } PollData;
 
 static gint
-invoke_vk_api (DurkaConnection *self, gchar *method, json_value **responce, GError **error, ...)
+invoke_vk_api (DurkaConnection *self, gchar *method, json_value **response, GError **error, ...)
 {
   va_list params;
   const gchar *key = NULL;
@@ -367,40 +369,38 @@ invoke_vk_api (DurkaConnection *self, gchar *method, json_value **responce, GErr
   if (!rest_proxy_call_sync (call, error)) {
     g_error ("Cannot make call: %s", (*error)->message);
     tp_base_connection_change_status (TP_BASE_CONNECTION(self), TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
     g_object_unref(call);
     return -1;
   }
 
   gchar *ret = NULL;
   ret = (gchar *) rest_proxy_call_get_payload (call);
-  *responce = json_parse (ret, strlen(ret));
+  *response = json_parse (ret, strlen (ret));
   g_object_unref(call);
   va_end(params);
-  if (*error != NULL)
+  if (*error)
     g_error_free(*error);
 
-  if (g_strcmp0 ((*responce)->u.object.values[0].name,"response") == 0)
+  if (g_strcmp0 ((*response)->u.object.values[0].name, "response") == 0)
     return 0;
 
-  *error = g_error_new(1,
-                       (*responce)->u.object.values[0].value->u.object.values[0].value->u.integer,
-                       "%s",(*responce)->u.object.values[0].value->u.object.values[1].value->u.string.ptr);
+  *error = g_error_new(1, (*response)->u.object.values[0].value->u.object.values[0].value->u.integer,
+                       "%s", (*response)->u.object.values[0].value->u.object.values[1].value->u.string.ptr);
   return (*error)->code;
 }
 
 static gint
-request_long_poll_data (DurkaConnection *self, PollData **data, json_value **parsed, GError **error)
+request_long_poll_data (DurkaConnection *self,
+                        PollData **data,
+                        json_value **parsed,
+                        GError **error)
 {
 
-  if (invoke_vk_api (self, "messages.getLongPollServer", parsed, error, NULL) != 0)
-  {
+  if (invoke_vk_api (self, "messages.getLongPollServer", parsed, error, NULL) != 0) {
     return (*error)->code;
   } else {
-
-
-    if (*data == NULL)
-    {
+    if (*data == NULL) {
       gpointer p_data = g_slice_new (PollData);
       *data = p_data;
     }
@@ -426,14 +426,16 @@ request_long_poll_data (DurkaConnection *self, PollData **data, json_value **par
 }
 
 void
-long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_object, gpointer user_data)
+long_poll_listener (RestProxyCall *call,
+                    const GError *error,
+                    GObject *weak_object,
+                    gpointer user_data)
 {
   PollData *poll = user_data;
   GError *resterror = NULL;
   gchar *ret = NULL;
 
-  if (call != NULL)
-  {
+  if (call) {
     ret = (gchar *) rest_proxy_call_get_payload (call);
     //g_assert (g_utf8_validate (ret, -1, NULL));
     //g_print ("or maybe error: %i %s\n", error->code, error->message);
@@ -441,22 +443,16 @@ long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_obje
     json_value *parsed = json_parse (ret, strlen(ret));
     g_object_unref (call);
 
-    if ( g_strcmp0(parsed->u.object.values[0].name, "failed") != 0 )
-    {
+    if (g_strcmp0(parsed->u.object.values[0].name, "failed") != 0 ) {
+      g_free(poll->ts);
+      poll->ts = g_strdup_printf ("%li", parsed->u.object.values[0].value->u.integer);
 
-    g_free(poll->ts);
-    poll->ts = g_strdup_printf ("%li", parsed->u.object.values[0].value->u.integer);
-
-    if ( parsed->u.object.values[1].value->u.object.length == 0 )
-    {
-      g_print("no events.\n");
-    }
-    else
-    {
-      int i;
-      for (i =0; i < (int)parsed->u.object.values[1].value->u.object.length; i++)
-      {
-        int event_code = parsed->u.object.values[1].value->u.object.values[0].value->u.integer;
+      if ( parsed->u.object.values[1].value->u.object.length == 0 )
+        g_print("no events.\n");
+      else {
+        gint i;
+        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.object.length; i++) {
+          gint event_code = parsed->u.object.values[1].value->u.object.values[0].value->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
     1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
@@ -472,8 +468,8 @@ long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_obje
     62,$user_id,$chat_id -- пользователь $user_id начал набирать текст в беседе $chat_id.
     70,$user_id,$call_id -- пользователь $user_id совершил звонок имеющий идентификатор $call_id, дополнительную информацию о звонке можно получить используя метод voip.getCallInfo.*/
 
-	switch (event_code)
-        {
+        switch (event_code)
+          {
           case 0:
             g_print("someone deleted the msg");
             break;
@@ -496,8 +492,8 @@ long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_obje
             g_print("someone is offline");
             break;
           case 51:
-             g_print("someone changed the chat params");
-           break;
+            g_print("someone changed the chat params");
+            break;
           case 61:
             g_print("someone started to type a msg");
             break;
@@ -509,19 +505,18 @@ long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_obje
             break;
           default:
             g_print("meteorite?");
+          }
         }
       }
-    }
     } else {
-
       g_print("expired. Let's renew!\n");
 
       json_value *lp_parsed = NULL;
       GError *lp_err = NULL;
 
-      if (request_long_poll_data(DURKA_CONNECTION(poll->conn), &poll, &lp_parsed, &lp_err) !=0)
+      if (request_long_poll_data (DURKA_CONNECTION (poll->conn), &poll, &lp_parsed, &lp_err) != 0)
       {
-        g_error("Method messages.getLongPollServer returned code %i, %s",lp_err->code, lp_err->message);
+        g_error("Method messages.getLongPollServer returned code %i, %s", lp_err->code, lp_err->message);
         if (parsed != NULL)
           json_value_free(lp_parsed);
         g_error_free(lp_err);
@@ -549,9 +544,6 @@ long_poll_listener (RestProxyCall *call, const GError *error, GObject *weak_obje
 	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_NETWORK_ERROR ); 
   }
-
-  return;
-
 }
 
 static gboolean
@@ -585,8 +577,7 @@ start_connecting (TpBaseConnection *conn,
   GError *err = NULL;
   PollData *data = NULL;
 
-  if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0)
-  {
+  if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
     g_error("Method users.get returned code %i, %s",err->code,err->message);
     g_error_free(err);
     if (parsed != NULL)
@@ -598,19 +589,15 @@ start_connecting (TpBaseConnection *conn,
   /* Getting data required for connection to a Long Poll server */
   /* https://vk.com/dev/messages.getLongPollServer              */
 
-  if (request_long_poll_data(self, &data, &parsed, &err) !=0)
-  {
+  if (request_long_poll_data(self, &data, &parsed, &err) !=0) {
     g_error("Method messages.getLongPollServer returned code %i, %s",err->code, err->message);
     if (parsed != NULL)
       json_value_free(parsed);
     g_error_free(err);
     json_value_free(parsed);
   } else {
-
     data->conn = conn;
-
     long_poll_listener (NULL, NULL, NULL, data);
-
     json_value_free (parsed);
   }
 
