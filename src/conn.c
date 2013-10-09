@@ -359,7 +359,7 @@ invoke_vk_api (DurkaConnection *self, gchar *method, json_value **response, GErr
                               "v", "5.2",
                               NULL);
 
-  va_start(params, error);
+  va_start (params, error);
   while ((key = va_arg (params, const gchar *)) != NULL)
   {
       value = va_arg (params, const gchar *);
@@ -370,22 +370,22 @@ invoke_vk_api (DurkaConnection *self, gchar *method, json_value **response, GErr
     g_error ("Cannot make call: %s", (*error)->message);
     tp_base_connection_change_status (TP_BASE_CONNECTION(self), TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
-    g_object_unref(call);
+    g_object_unref (call);
     return -1;
   }
 
   gchar *ret = NULL;
   ret = (gchar *) rest_proxy_call_get_payload (call);
   *response = json_parse (ret, strlen (ret));
-  g_object_unref(call);
-  va_end(params);
+  g_object_unref (call);
+  va_end (params);
   if (*error)
-    g_error_free(*error);
+    g_error_free (*error);
 
   if (g_strcmp0 ((*response)->u.object.values[0].name, "response") == 0)
     return 0;
 
-  *error = g_error_new(1, (*response)->u.object.values[0].value->u.object.values[0].value->u.integer,
+  *error = g_error_new (1, (*response)->u.object.values[0].value->u.object.values[0].value->u.integer,
                        "%s", (*response)->u.object.values[0].value->u.object.values[1].value->u.string.ptr);
   return (*error)->code;
 }
@@ -434,25 +434,28 @@ long_poll_listener (RestProxyCall *call,
   PollData *poll = user_data;
   GError *resterror = NULL;
   gchar *ret = NULL;
+  gint event_code;
+  gint user_id;
 
   if (call) {
     ret = (gchar *) rest_proxy_call_get_payload (call);
     //g_assert (g_utf8_validate (ret, -1, NULL));
     //g_print ("or maybe error: %i %s\n", error->code, error->message);
+    g_print ("ret: %s\n", ret);
 
-    json_value *parsed = json_parse (ret, strlen(ret));
+    json_value *parsed = json_parse (ret, strlen (ret));
     g_object_unref (call);
 
-    if (g_strcmp0(parsed->u.object.values[0].name, "failed") != 0 ) {
-      g_free(poll->ts);
+    if (g_strcmp0 (parsed->u.object.values[0].name, "failed") != 0) {
+      g_free (poll->ts);
       poll->ts = g_strdup_printf ("%li", parsed->u.object.values[0].value->u.integer);
 
-      if ( parsed->u.object.values[1].value->u.object.length == 0 )
-        g_print("no events.\n");
+      if (parsed->u.object.values[1].value->u.object.length == 0)
+        g_print ("no events.\n");
       else {
         gint i;
-        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.object.length; i++) {
-          gint event_code = parsed->u.object.values[1].value->u.object.values[0].value->u.integer;
+        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.array.values[0]->u.array.length; i++) {
+          event_code = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i]->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
     1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
@@ -471,60 +474,66 @@ long_poll_listener (RestProxyCall *call,
         switch (event_code)
           {
           case 0:
-            g_print("someone deleted the msg");
+            g_print ("someone deleted the msg,");
             break;
           case 1:
-            g_print("someone changed flags of the msg");
+            g_print ("someone changed flags of the msg,");
             break;
           case 2:
-            g_print("someone set flags of the msg");
+            g_print ("someone set flags of the msg,");
             break;
           case 3:
-            g_print("someone unset flags of the msg");
+            g_print ("someone unset flags of the msg,");
             break;
           case 4:
-            g_print("someone added the msg");
+            g_print ("someone added the msg,");
             break;
           case 8:
-            g_print("someone is online");
+            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer * (-1);
+            g_print ("%i is online!\n", user_id);
+            i += 2;
             break;
           case 9:
-            g_print("someone is offline");
+            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer * (-1);
+            g_print ("%i is offline!\n", user_id);
+            i += 2;
             break;
           case 51:
-            g_print("someone changed the chat params");
+            g_print ("someone changed the chat params,");
             break;
           case 61:
-            g_print("someone started to type a msg");
+            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer;
+            g_print ("%i started to type a msg!\n", user_id);
+            i += 2;
             break;
           case 62:
-            g_print("someone started to type a msg (again)");
+            g_print ("someone started to type a msg (again),");
             break;
           case 70:
-            g_print("someone is calling");
+            g_print ("someone is calling,");
             break;
           default:
-            g_print("meteorite?");
+            g_print ("meteorite%i?,", event_code);
           }
         }
       }
     } else {
-      g_print("expired. Let's renew!\n");
+      g_print ("expired. Let's renew!\n");
 
       json_value *lp_parsed = NULL;
       GError *lp_err = NULL;
 
       if (request_long_poll_data (DURKA_CONNECTION (poll->conn), &poll, &lp_parsed, &lp_err) != 0)
       {
-        g_error("Method messages.getLongPollServer returned code %i, %s", lp_err->code, lp_err->message);
+        g_error ("Method messages.getLongPollServer returned code %i, %s", lp_err->code, lp_err->message);
         if (parsed != NULL)
-          json_value_free(lp_parsed);
-        g_error_free(lp_err);
+          json_value_free (lp_parsed);
+        g_error_free (lp_err);
         //TODO: also free poll
         return;
       }
       if (parsed != NULL)
-        json_value_free(lp_parsed);
+        json_value_free (lp_parsed);
     }
     json_value_free (parsed);
   }
@@ -542,7 +551,7 @@ long_poll_listener (RestProxyCall *call,
   if (!rest_proxy_call_async (call, long_poll_listener, NULL, user_data, &resterror)) {
     g_error ("Cannot make call: %s", error->message);
 	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR ); 
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR); 
   }
 }
 
@@ -578,23 +587,23 @@ start_connecting (TpBaseConnection *conn,
   PollData *data = NULL;
 
   if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
-    g_error("Method users.get returned code %i, %s",err->code,err->message);
-    g_error_free(err);
+    g_error ("Method users.get returned code %i, %s",err->code,err->message);
+    g_error_free (err);
     if (parsed != NULL)
-      json_value_free(parsed);
+      json_value_free (parsed);
   }
   if (parsed != NULL)
-    json_value_free(parsed);
+    json_value_free (parsed);
 
   /* Getting data required for connection to a Long Poll server */
   /* https://vk.com/dev/messages.getLongPollServer              */
 
-  if (request_long_poll_data(self, &data, &parsed, &err) !=0) {
-    g_error("Method messages.getLongPollServer returned code %i, %s",err->code, err->message);
+  if (request_long_poll_data (self, &data, &parsed, &err) !=0) {
+    g_error ("Method messages.getLongPollServer returned code %i, %s",err->code, err->message);
     if (parsed != NULL)
-      json_value_free(parsed);
-    g_error_free(err);
-    json_value_free(parsed);
+      json_value_free (parsed);
+    g_error_free (err);
+    json_value_free (parsed);
   } else {
     data->conn = conn;
     long_poll_listener (NULL, NULL, NULL, data);
