@@ -1,5 +1,5 @@
 telepathy-durka
-=============
+===============
 
 VK Connection Manager for Telepathy.
 
