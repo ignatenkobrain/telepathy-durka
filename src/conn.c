@@ -454,8 +454,9 @@ long_poll_listener (RestProxyCall *call,
         g_print ("no events.\n");
       else {
         gint i;
-        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.array.values[0]->u.array.length; i++) {
-          event_code = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i]->u.integer;
+        for (i = 0; i < (gint) parsed->u.object.values[1].value->u.array.length; i++) {
+          json_value *event = parsed->u.object.values[1].value->u.array.values[i];
+          event_code = event->u.array.values[0]->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
     1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
@@ -489,22 +490,19 @@ long_poll_listener (RestProxyCall *call,
             g_print ("someone added the msg,");
             break;
           case 8:
-            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer * (-1);
+            user_id = event->u.array.values[1]->u.integer * (-1);
             g_print ("%i is online!\n", user_id);
-            i += 2;
             break;
           case 9:
-            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer * (-1);
+            user_id = event->u.array.values[1]->u.integer * (-1);
             g_print ("%i is offline!\n", user_id);
-            i += 2;
             break;
           case 51:
             g_print ("someone changed the chat params,");
             break;
           case 61:
-            user_id = parsed->u.object.values[1].value->u.array.values[0]->u.array.values[i+1]->u.integer;
+            user_id = event->u.array.values[1]->u.integer;
             g_print ("%i started to type a msg!\n", user_id);
-            i += 2;
             break;
           case 62:
             g_print ("someone started to type a msg (again),");
