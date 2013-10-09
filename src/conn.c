@@ -54,7 +54,6 @@ typedef struct
   gchar *server;
   gchar *key;
   gchar *ts;
-  gchar *ts_prev;
   GTimer *timer;
   gboolean exit;
   SoupSession *session;
@@ -257,15 +256,76 @@ json_value_find (const json_value *parent,
 {
     guint i;
 
-    if (parent == NULL)
+    if ((parent == NULL) || (parent->type != json_object))
         return NULL;
 
-    if (parent->type == json_object)
-      for (i = 0; i < (guint) parent->u.object.length; i++)
-        if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
-          return parent->u.object.values[i].value;
+    for (i = 0; i < (guint) parent->u.object.length; i++)
+      if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
+        return parent->u.object.values[i].value;
 
     return NULL;
+}
+
+static gint
+invoke_vk_api (DurkaConnection *self,
+               const gchar *method,
+               json_value **response,
+               GError **error,
+               ...)
+{
+  va_list params;
+  const gchar *key = NULL;
+  const gchar *value = NULL;
+
+  RestProxyCall *call = rest_proxy_new_call (self->priv->rest);
+  rest_proxy_call_set_function (call, method);
+  rest_proxy_call_set_method (call, "POST");
+  rest_proxy_call_add_params (call,
+                              "access_token", self->priv->token,
+                              "format", "json",
+                              "v", "5.2",
+                              NULL);
+
+  va_start (params, error);
+  while ((key = va_arg (params, const gchar *)) != NULL) {
+      value = va_arg (params, const gchar *);
+      rest_proxy_call_add_param (call, key, value);
+  }
+  va_end (params);
+
+  if (!rest_proxy_call_sync (call, error)) {
+    g_error ("Cannot make call: %s", (*error)->message);
+    tp_base_connection_change_status (TP_BASE_CONNECTION(self), TP_CONNECTION_STATUS_DISCONNECTED,
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+    g_object_unref (call);
+    return -1;
+  }
+
+  gchar *ret = NULL;
+  ret = (gchar *) rest_proxy_call_get_payload (call);
+
+  g_assert (g_utf8_validate (ret, -1, NULL));
+
+#ifdef ENABLE_DEBUG
+      g_print ("From %s: %s\n", method, ret);
+#endif
+
+  *response = json_parse (ret, strlen (ret));
+  g_object_unref (call);
+
+
+  g_assert ((*response)->type == json_object);
+
+  if (*error)
+    g_error_free (*error);
+
+  if (json_value_find(*response, "response"))
+    return 0;
+
+  json_value *l_error = json_value_find(*response, "error");
+  *error = g_error_new (1, json_value_find(l_error,"error_code")->u.integer,
+                       "%s", json_value_find(l_error,"error_msg")->u.string.ptr);
+  return (*error)->code;
 }
 
 static gboolean
@@ -277,11 +337,10 @@ polling (const gpointer data)
   json_value *updates;
   json_value *temp;
   GError *resterror = NULL;
-  gchar *ret;
   gboolean failed = TRUE;
   guint event_code = 0;
   gint user_id = NULL;
-  poll->ts_prev = NULL;
+  gboolean first_time = TRUE;
 
   g_timer_start (poll->timer);
 
@@ -289,27 +348,13 @@ polling (const gpointer data)
     if (failed) {
       /* Getting data required for connection to a Long Poll server
        * https://vk.com/dev/messages.getLongPollServer */
-      RestProxyCall *call = rest_proxy_new_call (poll->rest);
-      rest_proxy_call_set_function (call, "messages.getLongPollServer");
-      rest_proxy_call_add_params (call,
-                                  "access_token", poll->token,
-                                  "format", "json",
-                                  "v", "5.0",
-                                  NULL);
-      if (!rest_proxy_call_sync (call, &resterror)) {
-        g_error ("Cannot make call: %s", resterror->message);
-    	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
-            TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+      if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "messages.getLongPollServer", &parsed, &resterror, NULL)) {
+        //TODO: error handle
+        g_error("Method messages.getLongPollServer returned %i, %s",resterror->code,resterror->message);
+        return FALSE;
       }
-      ret = (gchar *) rest_proxy_call_get_payload (call);
-      g_assert (g_utf8_validate (ret, -1, NULL));
 
-#ifdef ENABLE_DEBUG
-      g_print ("messages.getLongPollServer: %s\n", ret);
-#endif
 
-      parsed = json_parse (ret, strlen(ret));
-      g_assert (parsed->type == json_object);
       response = json_value_find (parsed, "response");
 
       temp = json_value_find (response, "key");
@@ -324,35 +369,22 @@ polling (const gpointer data)
       g_assert (temp != NULL);
       poll->ts = g_strdup_printf ("%li", temp->u.integer);
 
-      g_object_unref (call);
+      json_value_free(parsed);
+      failed = FALSE;
+
     }
 
     /* Set online status every 14 mins
      * https://vk.com/dev/account.setOnline */
-    if (g_timer_elapsed (poll->timer, NULL) >= 840 || failed) {
-      RestProxyCall *call = rest_proxy_new_call (poll->rest);
-      rest_proxy_call_set_function (call, "account.setOnline");
-      rest_proxy_call_add_params (call,
-                                  "access_token", poll->token,
-                                  "format", "json",
-                                  "v", "5.0",
-                                  NULL);
-      if (!rest_proxy_call_sync (call, &resterror)) {
-        g_error ("Cannot make call: %s", resterror->message);
-    	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
-            TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+    if (g_timer_elapsed (poll->timer, NULL) >= 840 || first_time) {
+      first_time = FALSE;
+      if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "account.setOnline", &parsed, &resterror, NULL)) {
+        //TODO: error handle
+        g_error("Method account.setOnline returned %i, %s",resterror->code,resterror->message);
+        return FALSE;
       }
-      ret = (gchar *) rest_proxy_call_get_payload (call);
-      g_assert (g_utf8_validate (ret, -1, NULL));
 
-#ifdef ENABLE_DEBUG
-      g_print ("account.setOnline: %s\n", ret);
-#endif
-
-      parsed = json_parse (ret, strlen(ret));
-      g_assert (parsed->type == json_object);
       response = json_value_find (parsed, "response");
-      g_assert (response != NULL);
 
       if (response->u.integer == 1)
         tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_CONNECTED,
@@ -361,8 +393,12 @@ polling (const gpointer data)
         tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
             TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
 
-      g_object_unref (call);
+      json_value_free(parsed);
     }
+
+#ifdef ENABLE_DEBUG
+    g_print ("polling server... ");
+#endif
 
     poll->session = soup_session_sync_new ();
     gchar *url = g_strdup_printf ("http://%s?act=a_check&key=%s&ts=%s&wait=25&mode=2",
@@ -375,28 +411,29 @@ polling (const gpointer data)
       g_assert (g_utf8_validate (poll->msg->response_body->data, -1, NULL)); 
 
 #ifdef ENABLE_DEBUG
-      if (g_strcmp0 (poll->ts, poll->ts_prev) != 0)
-        g_print ("polling: %s\n", poll->msg->response_body->data);
+      g_print ("response: %s\n", poll->msg->response_body->data);
 #endif
 
       parsed = json_parse (poll->msg->response_body->data, strlen (poll->msg->response_body->data));
       g_assert (parsed->type == json_object);
-      response = json_value_find (parsed, "ts");
 
-      if (temp != NULL) {
-        g_assert (temp->type == json_integer);
-        poll->ts_prev = poll->ts;
-        poll->ts = g_strdup_printf ("%li", temp->u.integer);
-        failed = FALSE;
+
+      if (json_value_find(parsed,"failed"))
+          failed = TRUE;
+
+      if (!failed) {
+
+        g_free (poll->ts);
+        poll->ts = g_strdup_printf ("%li", json_value_find(parsed, "ts")->u.integer);
+
         updates = json_value_find(parsed, "updates");
-        if (g_strcmp0 (poll->ts, poll->ts_prev) != 0) {
-          if (updates->u.array.length == 0)
-            g_print ("No events. Sad..\n");
-          else {
-            guint i;
-            for (i = 0; i < (guint) updates->u.array.length; i++) {
-              json_value *event = updates->u.array.values[i];
-              event_code = event->u.array.values[0]->u.integer;
+        if (updates->u.array.length == 0) {
+          g_print ("No events. Sad..\n");
+        } else {
+          guint i;
+          for (i = 0; i < (guint) updates->u.array.length; i++) {
+            json_value *event = updates->u.array.values[i];
+            event_code = event->u.array.values[0]->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
     1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
@@ -412,8 +449,7 @@ polling (const gpointer data)
     62,$user_id,$chat_id -- пользователь $user_id начал набирать текст в беседе $chat_id.
     70,$user_id,$call_id -- пользователь $user_id совершил звонок имеющий идентификатор $call_id, дополнительную информацию о звонке можно получить используя метод voip.getCallInfo.*/
 
-            switch (event_code)
-              {
+            switch (event_code) {
               case 0:
                 g_print ("someone deleted the msg,");
                 break;
@@ -455,48 +491,33 @@ polling (const gpointer data)
                 break;
               default:
                 g_print ("meteorite%i?,", event_code);
-              }
             }
           }
         }
-      } else
-        failed = TRUE;
+      }
+      json_value_free (parsed);
     }
-    json_value_free (parsed);
+
   }
 
   /* Set offline status at disconnect
    * https://vk.com/dev/account.setOffline */
-  RestProxyCall *call = rest_proxy_new_call (poll->rest);
-  rest_proxy_call_set_function (call, "account.setOffline");
-  rest_proxy_call_add_params (call,
-                              "access_token", poll->token,
-                              "format", "json",
-                              "v", "5.0",
-                              NULL);
-  if (!rest_proxy_call_sync (call, &resterror)) {
-    g_error ("Cannot make call: %s", resterror->message);
-	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+  if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "account.setOffline", &parsed, &resterror, NULL)) {
+    //TODO: error handle
+    g_error("Method account.setOffline returned %i, %s",resterror->code,resterror->message);
+    return FALSE;
   }
-  ret = (gchar *) rest_proxy_call_get_payload (call);
-  g_assert (g_utf8_validate (ret, -1, NULL));
 
-#ifdef ENABLE_DEBUG
-  g_print ("account.setOffline: %s\n", ret);
-#endif
+  response = json_value_find (parsed, "response");
 
-  response = json_parse (ret, strlen(ret));
-  g_assert (response->type == json_object);
-
-  if (response->u.object.values[0].value->u.integer == 1)
+  if (response->u.integer == 1)
     tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_REQUESTED);
   else
     tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
 
-  g_object_unref (call);
+  json_value_free(parsed);
 
   g_thread_exit (NULL);
   return TRUE;
@@ -506,8 +527,6 @@ static gboolean
 start_connecting (TpBaseConnection *conn,
                   GError **error)
 {
-  GError *resterror = NULL;
-  RestProxyCall *call;
   DurkaConnection *self = DURKA_CONNECTION (conn);
   TpHandleRepoIface *contact_repo = tp_base_connection_get_handles (conn,
       TP_HANDLE_TYPE_CONTACT);
@@ -522,32 +541,27 @@ start_connecting (TpBaseConnection *conn,
   if (self_handle == 0)
     return FALSE;
 
-  self->priv->rest = rest_proxy_new ("https://api.vk.com/method/", FALSE);
-  call = rest_proxy_new_call (self->priv->rest);
-
-  gchar *ret = NULL;
-
-  /* Gettinginfo about me
-   * https://vk.com/dev/users.get */
-  rest_proxy_call_set_function (call, "users.get");
-  rest_proxy_call_add_params (call,
-                              "fields", "photo_100",
-                              "access_token", self->priv->token,
-                              "format", "json",
-                              "v", "5.0",
-                              NULL);
-  if (!rest_proxy_call_sync (call, &resterror)) {
-    g_error ("Cannot make call: %s", resterror->message);
-	  tp_base_connection_change_status (conn, TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
-  }
-	ret = (gchar *) rest_proxy_call_get_payload (call);
-  g_assert (g_utf8_validate (ret, -1, NULL));
-
 #ifdef ENABLE_DEBUG
   setlocale (LC_ALL, "");
-  g_print ("users.get: %s\n", ret);
 #endif
+
+  self->priv->rest = rest_proxy_new ("https://api.vk.com/method/", FALSE);
+
+
+  json_value *parsed = NULL;
+  GError *err = NULL;
+
+  if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
+    //TODO: error handle
+    g_error ("Method users.get returned code %i, %s",err->code,err->message);
+  }
+  json_value *response = json_value_find(parsed,"response");
+#ifdef ENABLE_DEBUG
+  g_print ("Hi, %s %s!\n", json_value_find(response->u.array.values[0], "first_name")->u.string.ptr,
+                           json_value_find(response->u.array.values[0], "last_name")->u.string.ptr);
+#endif
+
+  json_value_free (parsed);
 
   self->priv->data = g_slice_new (PollData);
   PollData *poll = self->priv->data;
@@ -560,8 +574,6 @@ start_connecting (TpBaseConnection *conn,
   self->priv->thread = g_thread_new ("polling", (GThreadFunc) polling, self->priv->data);
 
   tp_base_connection_set_self_handle (conn, self_handle);
-
-  g_object_unref (call);
 
   return TRUE;
 }
@@ -587,8 +599,7 @@ aliasing_fill_contact_attributes (GObject *object,
     DURKA_CONNECTION (object);
   guint i;
 
-  for (i = 0; i < contacts->len; i++)
-    {
+  for (i = 0; i < contacts->len; i++) {
       TpHandle contact = g_array_index (contacts, guint, i);
 
       tp_contacts_mixin_set_contact_attribute (attributes, contact,
