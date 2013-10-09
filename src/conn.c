@@ -295,7 +295,7 @@ invoke_vk_api (DurkaConnection *self,
 
   if (!rest_proxy_call_sync (call, error)) {
     g_error ("Cannot make call: %s", (*error)->message);
-    tp_base_connection_change_status (TP_BASE_CONNECTION(self), TP_CONNECTION_STATUS_DISCONNECTED,
+    tp_base_connection_change_status (TP_BASE_CONNECTION (self), TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
     g_object_unref (call);
     return -1;
@@ -319,12 +319,12 @@ invoke_vk_api (DurkaConnection *self,
   if (*error)
     g_error_free (*error);
 
-  if (json_value_find(*response, "response"))
+  if (json_value_find (*response, "response"))
     return 0;
 
-  json_value *l_error = json_value_find(*response, "error");
-  *error = g_error_new (1, json_value_find(l_error,"error_code")->u.integer,
-                       "%s", json_value_find(l_error,"error_msg")->u.string.ptr);
+  json_value *l_error = json_value_find (*response, "error");
+  *error = g_error_new (1, json_value_find (l_error, "error_code")->u.integer,
+                       "%s", json_value_find (l_error, "error_msg")->u.string.ptr);
   return (*error)->code;
 }
 
@@ -348,9 +348,9 @@ polling (const gpointer data)
     if (failed) {
       /* Getting data required for connection to a Long Poll server
        * https://vk.com/dev/messages.getLongPollServer */
-      if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "messages.getLongPollServer", &parsed, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "messages.getLongPollServer", &parsed, &resterror, NULL)) {
         //TODO: error handle
-        g_error("Method messages.getLongPollServer returned %i, %s",resterror->code,resterror->message);
+        g_error ("Method messages.getLongPollServer returned %i, %s", resterror->code, resterror->message);
         return FALSE;
       }
 
@@ -369,7 +369,7 @@ polling (const gpointer data)
       g_assert (temp != NULL);
       poll->ts = g_strdup_printf ("%li", temp->u.integer);
 
-      json_value_free(parsed);
+      json_value_free (parsed);
       failed = FALSE;
 
     }
@@ -378,9 +378,9 @@ polling (const gpointer data)
      * https://vk.com/dev/account.setOnline */
     if (g_timer_elapsed (poll->timer, NULL) >= 840 || first_time) {
       first_time = FALSE;
-      if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "account.setOnline", &parsed, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOnline", &parsed, &resterror, NULL)) {
         //TODO: error handle
-        g_error("Method account.setOnline returned %i, %s",resterror->code,resterror->message);
+        g_error ("Method account.setOnline returned %i, %s", resterror->code, resterror->message);
         return FALSE;
       }
 
@@ -393,7 +393,7 @@ polling (const gpointer data)
         tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
             TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
 
-      json_value_free(parsed);
+      json_value_free (parsed);
     }
 
 #ifdef ENABLE_DEBUG
@@ -418,15 +418,15 @@ polling (const gpointer data)
       g_assert (parsed->type == json_object);
 
 
-      if (json_value_find(parsed,"failed"))
+      if (json_value_find (parsed, "failed"))
           failed = TRUE;
 
       if (!failed) {
 
         g_free (poll->ts);
-        poll->ts = g_strdup_printf ("%li", json_value_find(parsed, "ts")->u.integer);
+        poll->ts = g_strdup_printf ("%li", json_value_find (parsed, "ts")->u.integer);
 
-        updates = json_value_find(parsed, "updates");
+        updates = json_value_find (parsed, "updates");
         if (updates->u.array.length == 0) {
           g_print ("No events. Sad..\n");
         } else {
@@ -451,19 +451,19 @@ polling (const gpointer data)
 
             switch (event_code) {
               case 0:
-                g_print ("someone deleted the msg,");
+                g_print ("someone deleted the msg, ");
                 break;
               case 1:
-                g_print ("someone changed flags of the msg,");
+                g_print ("someone changed flags of the msg, ");
                 break;
               case 2:
-                g_print ("someone set flags of the msg,");
+                g_print ("someone set flags of the msg, ");
                 break;
               case 3:
-                g_print ("someone unset flags of the msg,");
+                g_print ("someone unset flags of the msg, ");
                 break;
               case 4:
-                g_print ("someone added the msg,");
+                g_print ("someone added the msg, ");
                 break;
               case 8:
                 user_id = event->u.array.values[1]->u.integer * (-1);
@@ -474,23 +474,23 @@ polling (const gpointer data)
                 g_print ("%i is offline!\n", user_id);
                 break;
               case 51:
-                g_print ("someone changed the chat params,");
+                g_print ("someone changed the chat params, ");
                 break;
               case 61:
                 user_id = event->u.array.values[1]->u.integer;
                 g_print ("%i started to type a msg!\n", user_id);
                 break;
               case 62:
-                g_print ("someone started to type a msg (again),");
+                g_print ("someone started to type a msg (again), ");
                 break;
               case 70:
-                g_print ("someone is calling,");
+                g_print ("someone is calling, ");
                 break;
               case 101:
-                g_print ("pavel durov is an idiot,");
+                g_print ("pavel durov is an idiot, ");
                 break;
               default:
-                g_print ("meteorite%i?,", event_code);
+                g_print ("meteorite%i?, ", event_code);
             }
           }
         }
@@ -502,9 +502,9 @@ polling (const gpointer data)
 
   /* Set offline status at disconnect
    * https://vk.com/dev/account.setOffline */
-  if (invoke_vk_api(DURKA_CONNECTION(poll->conn), "account.setOffline", &parsed, &resterror, NULL)) {
+  if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOffline", &parsed, &resterror, NULL)) {
     //TODO: error handle
-    g_error("Method account.setOffline returned %i, %s",resterror->code,resterror->message);
+    g_error ("Method account.setOffline returned %i, %s", resterror->code, resterror->message);
     return FALSE;
   }
 
@@ -517,7 +517,7 @@ polling (const gpointer data)
     tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
         TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
 
-  json_value_free(parsed);
+  json_value_free (parsed);
 
   g_thread_exit (NULL);
   return TRUE;
@@ -553,12 +553,12 @@ start_connecting (TpBaseConnection *conn,
 
   if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
     //TODO: error handle
-    g_error ("Method users.get returned code %i, %s",err->code,err->message);
+    g_error ("Method users.get returned code %i, %s", err->code, err->message);
   }
-  json_value *response = json_value_find(parsed,"response");
+  json_value *response = json_value_find (parsed, "response");
 #ifdef ENABLE_DEBUG
-  g_print ("Hi, %s %s!\n", json_value_find(response->u.array.values[0], "first_name")->u.string.ptr,
-                           json_value_find(response->u.array.values[0], "last_name")->u.string.ptr);
+  g_print ("Hi, %s %s!\n", json_value_find (response->u.array.values[0], "first_name")->u.string.ptr,
+                           json_value_find (response->u.array.values[0], "last_name")->u.string.ptr);
 #endif
 
   json_value_free (parsed);
