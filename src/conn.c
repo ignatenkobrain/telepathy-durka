@@ -1,14 +1,3 @@
-/*
- * conn.c - an eri connection
- *
- * Copyright © 2007-2009 Collabora Ltd. <http://www.collabora.co.uk/>
- * Copyright © 2007-2009 Nokia Corporation
- *
- * Copying and distribution of this file, with or without modification,
- * are permitted in any medium without royalty provided the copyright
- * notice and this notice are preserved.
- */
-
 #include "config.h"
 
 #include "conn.h"
@@ -17,6 +6,8 @@
 #include <rest/rest-proxy.h> 
 #include <json.h>
 #include <string.h>
+// TODO: drop libsoup. http://vk.com/support?act=show&id=7863767
+#include <libsoup/soup.h>
 
 #ifdef ENABLE_DEBUG
 #include <locale.h>
@@ -26,98 +17,6 @@
 
 #include "contact-list.h"
 #include "protocol.h"
-
-
-#include <libsoup/soup.h>
-
-
-
-/* Derived durka-rest-proxy-poll, which doesn't do the escapes in URIs */
-
-#define REST_TYPE_DURKA_PROXY_CALL durka_proxy_call_get_type()
-
-#define REST_DURKA_PROXY_CALL(obj) \
-(G_TYPE_CHECK_INSTANCE_CAST ((obj), REST_TYPE_DURKA_PROXY_CALL, DurkaProxyCall))
-
-#define REST_DURKA_PROXY_CALL_CLASS(klass) \
-(G_TYPE_CHECK_CLASS_CAST ((klass), REST_TYPE_DURKA_PROXY_CALL, DurkaProxyCallClass))
-
-#define REST_IS_DURKA_PROXY_CALL(obj) \
-(G_TYPE_CHECK_INSTANCE_TYPE ((obj), REST_TYPE_DURKA_PROXY_CALL))
-
-#define REST_IS_DURKA_PROXY_CALL_CLASS(klass) \
-(G_TYPE_CHECK_CLASS_TYPE ((klass), REST_TYPE_DURKA_PROXY_CALL))
-
-#define REST_DURKA_PROXY_CALL_GET_CLASS(obj) \
-(G_TYPE_INSTANCE_GET_CLASS ((obj), REST_TYPE_DURKA_PROXY_CALL, DurkaProxyCallClass))
-
-typedef struct {
-  RestProxyCall parent;
-} DurkaProxyCall;
-
-typedef struct {
-  RestProxyCallClass parent_class;
-} DurkaProxyCallClass;
-
-GType durka_proxy_call_get_type (void);
-
-G_DEFINE_TYPE (DurkaProxyCall, durka_proxy_call, REST_TYPE_PROXY_CALL)
-
-
-static void
-hash_append_foreach (gpointer name,
-                     gpointer value,
-                     gpointer str)
-{
-  GString *l_str = str;
-  const gchar *l_name = name;
-  const gchar *l_value = value;
-
-  if (l_str->len)
-    g_string_append_c (l_str, '&');
-  g_string_append (l_str, l_name);
-  g_string_append_c (l_str, '=');
-  g_string_append (l_str, l_value);
-}
-
-static gboolean
-durka_proxy_call_serialize (RestProxyCall *self,
-                             gchar **content_type,
-                             gchar **content, gsize *content_len,
-                             GError **error)
-{
-  g_return_val_if_fail (REST_IS_DURKA_PROXY_CALL (self), FALSE);
-
-  GHashTable *hash;
-  hash = rest_params_as_string_hash_table (rest_proxy_call_get_params (self));
-
-  GString *str = g_string_new (NULL);
-
-  g_hash_table_foreach (hash, hash_append_foreach, str);
-  g_hash_table_unref (hash);
-
-  *content = g_strdup( g_string_free (str, FALSE));
-
-  *content_type = g_strdup ("text/plain");
-  *content_len = strlen (*content);
-
-  return TRUE;
-}
-
-static void
-durka_proxy_call_class_init (DurkaProxyCallClass *klass)
-{
-  RestProxyCallClass *parent_klass = (RestProxyCallClass*) klass;
-
-  parent_klass->serialize_params = durka_proxy_call_serialize;
-}
-
-static void
-durka_proxy_call_init (DurkaProxyCall *self)
-{
-}
-
-/* end of durka rest proxy call */
 
 static void init_aliasing (gpointer, gpointer);
 
@@ -147,14 +46,32 @@ enum
   N_PROPS
 };
 
+typedef struct
+{
+  RestProxy *rest;
+  TpBaseConnection *conn;
+  gchar *token;
+  gchar *server;
+  gchar *key;
+  gchar *ts;
+  gchar *ts_prev;
+  GTimer *timer;
+  gboolean exit;
+  SoupSession *session;
+  SoupMessage *msg;
+} PollData;
+
 struct _DurkaConnectionPrivate
 {
   gchar *account;
   gchar *password;
   gchar *token;	
   RestProxy *rest;
+  GThread *thread;
   DurkaContactList *contact_list;
   gboolean away;
+  gboolean exit;
+  gpointer data;
 };
 
 static void
@@ -334,149 +251,152 @@ create_channel_managers (TpBaseConnection *conn)
   return ret;
 }
 
-
-json_value *json_value_find (json_value *parent, gchar *name)
+static json_value *
+json_value_find (const json_value *parent,
+                             const gchar *name)
 {
-    int i;
+    guint i;
 
     if (parent == NULL)
         return NULL;
 
     if (parent->type == json_object)
-        for (i = 0; i < (int)parent->u.object.length; i++)
-        {
-            if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
-                return parent->u.object.values[i].value;
-        }
+      for (i = 0; i < (guint) parent->u.object.length; i++)
+        if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
+          return parent->u.object.values[i].value;
 
     return NULL;
 }
 
-
-typedef struct
+static gboolean
+polling (const gpointer data)
 {
-  RestProxy *proxy;
-  gchar *key;
-  gchar *ts;
-  TpBaseConnection *conn;
-} PollData;
+  PollData *poll = data;
+  json_value *parsed;
+  json_value *response;
+  json_value *updates;
+  json_value *temp;
+  GError *resterror = NULL;
+  gchar *ret;
+  gboolean failed = TRUE;
+  guint event_code = 0;
+  gint user_id = NULL;
+  poll->ts_prev = NULL;
 
-static gint
-invoke_vk_api (DurkaConnection *self, gchar *method, json_value **response, GError **error, ...)
-{
-  va_list params;
-  const gchar *key = NULL;
-  const gchar *value = NULL;
+  g_timer_start (poll->timer);
 
-  //RestProxyCall *call = g_object_new (REST_TYPE_DURKA_PROXY_CALL, "proxy", self->priv->rest, NULL);
-  RestProxyCall *call = rest_proxy_new_call (self->priv->rest);
-  rest_proxy_call_set_function (call, method);
-  rest_proxy_call_set_method (call, "POST");
-  rest_proxy_call_add_params (call,
-                              "access_token", self->priv->token,
-                              "format", "json",
-                              "v", "5.2",
-                              NULL);
+  while (!poll->exit) {
+    if (failed) {
+      /* Getting data required for connection to a Long Poll server
+       * https://vk.com/dev/messages.getLongPollServer */
+      RestProxyCall *call = rest_proxy_new_call (poll->rest);
+      rest_proxy_call_set_function (call, "messages.getLongPollServer");
+      rest_proxy_call_add_params (call,
+                                  "access_token", poll->token,
+                                  "format", "json",
+                                  "v", "5.0",
+                                  NULL);
+      if (!rest_proxy_call_sync (call, &resterror)) {
+        g_error ("Cannot make call: %s", resterror->message);
+    	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
+            TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+      }
+      ret = (gchar *) rest_proxy_call_get_payload (call);
+      g_assert (g_utf8_validate (ret, -1, NULL));
 
-  va_start (params, error);
-  while ((key = va_arg (params, const gchar *)) != NULL)
-  {
-      value = va_arg (params, const gchar *);
-      rest_proxy_call_add_param (call, key, value);
-  }
+#ifdef ENABLE_DEBUG
+      g_print ("messages.getLongPollServer: %s\n", ret);
+#endif
 
-  if (!rest_proxy_call_sync (call, error)) {
-    g_error ("Cannot make call: %s", (*error)->message);
-    tp_base_connection_change_status (TP_BASE_CONNECTION(self), TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
-    g_object_unref (call);
-    return -1;
-  }
+      parsed = json_parse (ret, strlen(ret));
+      g_assert (parsed->type == json_object);
+      response = json_value_find (parsed, "response");
 
-  gchar *ret = NULL;
-  ret = (gchar *) rest_proxy_call_get_payload (call);
-  *response = json_parse (ret, strlen (ret));
-  g_object_unref (call);
-  va_end (params);
-  if (*error)
-    g_error_free (*error);
+      temp = json_value_find (response, "key");
+      g_assert (temp != NULL);
+      poll->key = g_strdup (temp->u.string.ptr);
 
-  if  (json_value_find(*response, "response"))
-    return 0;
+      temp = json_value_find (response, "server");
+      g_assert (temp != NULL);
+      poll->server = g_strdup (temp->u.string.ptr);
 
-  json_value *l_error = json_value_find(*response, "error");
-  *error = g_error_new (1, json_value_find(l_error,"error_code")->u.integer,
-                       "%s", json_value_find(l_error,"error_msg")->u.string.ptr);
-  return (*error)->code;
-}
+      temp = json_value_find (response, "ts");
+      g_assert (temp != NULL);
+      poll->ts = g_strdup_printf ("%li", temp->u.integer);
 
-static gint
-request_long_poll_data (DurkaConnection *self,
-                        PollData **data,
-                        json_value **parsed,
-                        GError **error)
-{
-
-  if (invoke_vk_api (self, "messages.getLongPollServer", parsed, error, NULL) != 0) {
-    return (*error)->code;
-  } else {
-    if (*data == NULL) {
-      gpointer p_data = g_slice_new (PollData);
-      *data = p_data;
+      g_object_unref (call);
     }
 
-    json_value *response;
-    json_value *temp;
-    response = json_value_find(*parsed, "response");
+    /* Set online status every 14 mins
+     * https://vk.com/dev/account.setOnline */
+    if (g_timer_elapsed (poll->timer, NULL) >= 840 || failed) {
+      RestProxyCall *call = rest_proxy_new_call (poll->rest);
+      rest_proxy_call_set_function (call, "account.setOnline");
+      rest_proxy_call_add_params (call,
+                                  "access_token", poll->token,
+                                  "format", "json",
+                                  "v", "5.0",
+                                  NULL);
+      if (!rest_proxy_call_sync (call, &resterror)) {
+        g_error ("Cannot make call: %s", resterror->message);
+    	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
+            TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+      }
+      ret = (gchar *) rest_proxy_call_get_payload (call);
+      g_assert (g_utf8_validate (ret, -1, NULL));
 
-    g_assert ((temp = json_value_find(response,"key")) != NULL);
-    (*data)->key = g_strdup (temp->u.string.ptr);
+#ifdef ENABLE_DEBUG
+      g_print ("account.setOnline: %s\n", ret);
+#endif
 
-    g_assert ((temp = json_value_find(response,"server")) != NULL);
-    gchar *url = g_strdup_printf ("http://%s", temp->u.string.ptr);
-    (*data)->proxy = rest_proxy_new (url, FALSE);
+      parsed = json_parse (ret, strlen(ret));
+      g_assert (parsed->type == json_object);
+      response = json_value_find (parsed, "response");
+      g_assert (response != NULL);
 
-    g_assert ((temp = json_value_find(response,"ts")) != NULL);
-    (*data)->ts = g_strdup_printf ("%li", temp->u.integer);
+      if (response->u.integer == 1)
+        tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_CONNECTED,
+            TP_CONNECTION_STATUS_REASON_REQUESTED);
+      else
+        tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
+            TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
 
-    return 0;
-  }
-}
+      g_object_unref (call);
+    }
 
-void
-long_poll_listener (RestProxyCall *call,
-                    const GError *error,
-                    GObject *weak_object,
-                    gpointer user_data)
-{
-  PollData *poll = user_data;
-  GError *resterror = NULL;
-  gchar *ret = NULL;
-  gint event_code;
-  gint user_id;
+    poll->session = soup_session_sync_new ();
+    gchar *url = g_strdup_printf ("http://%s?act=a_check&key=%s&ts=%s&wait=25&mode=2",
+                                  poll->server, poll->key, poll->ts);
+    poll->msg = soup_message_new ("GET", url);
+    soup_message_set_request (poll->msg, "application/json", SOUP_MEMORY_COPY, NULL, 0);
+    guint status = soup_session_send_message (poll->session, poll->msg);
+    if (status != SOUP_STATUS_CANCELLED) {
+      g_assert (status == 200);
+      g_assert (g_utf8_validate (poll->msg->response_body->data, -1, NULL)); 
 
-  if (call) {
-    ret = (gchar *) rest_proxy_call_get_payload (call);
-    //g_assert (g_utf8_validate (ret, -1, NULL));
-    //g_print ("or maybe error: %i %s\n", error->code, error->message);
-    g_print ("ret: %s\n", ret);
+#ifdef ENABLE_DEBUG
+      if (g_strcmp0 (poll->ts, poll->ts_prev) != 0)
+        g_print ("polling: %s\n", poll->msg->response_body->data);
+#endif
 
-    json_value *parsed = json_parse (ret, strlen (ret));
-    json_value *updates;
-    g_object_unref (call);
+      parsed = json_parse (poll->msg->response_body->data, strlen (poll->msg->response_body->data));
+      g_assert (parsed->type == json_object);
+      response = json_value_find (parsed, "ts");
 
-    if (json_value_find(parsed, "failed") == NULL) {
-      g_free (poll->ts);
-      poll->ts = g_strdup_printf ("%li", json_value_find(parsed, "ts")->u.integer);
-
-      updates = json_value_find(parsed, "updates");
-      if (updates->u.array.length == 0)
-        g_print ("no events.\n");
-      else {
-        gint i;
-        for (i = 0; i < (gint) updates->u.array.length; i++) {
-          json_value *event = updates->u.array.values[i];
-          event_code = event->u.array.values[0]->u.integer;
+      if (temp != NULL) {
+        g_assert (temp->type == json_integer);
+        poll->ts_prev = poll->ts;
+        poll->ts = g_strdup_printf ("%li", temp->u.integer);
+        failed = FALSE;
+        updates = json_value_find(parsed, "updates");
+        if (g_strcmp0 (poll->ts, poll->ts_prev) != 0) {
+          if (updates->u.array.length == 0)
+            g_print ("No events. Sad..\n");
+          else {
+            guint i;
+            for (i = 0; i < (guint) updates->u.array.length; i++) {
+              json_value *event = updates->u.array.values[i];
+              event_code = event->u.array.values[0]->u.integer;
 /*
     0,$message_id,0 -- удаление сообщения с указанным local_id
     1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
@@ -492,94 +412,102 @@ long_poll_listener (RestProxyCall *call,
     62,$user_id,$chat_id -- пользователь $user_id начал набирать текст в беседе $chat_id.
     70,$user_id,$call_id -- пользователь $user_id совершил звонок имеющий идентификатор $call_id, дополнительную информацию о звонке можно получить используя метод voip.getCallInfo.*/
 
-        switch (event_code)
-          {
-          case 0:
-            g_print ("someone deleted the msg,");
-            break;
-          case 1:
-            g_print ("someone changed flags of the msg,");
-            break;
-          case 2:
-            g_print ("someone set flags of the msg,");
-            break;
-          case 3:
-            g_print ("someone unset flags of the msg,");
-            break;
-          case 4:
-            g_print ("someone added the msg,");
-            break;
-          case 8:
-            user_id = event->u.array.values[1]->u.integer * (-1);
-            g_print ("%i is online!\n", user_id);
-            break;
-          case 9:
-            user_id = event->u.array.values[1]->u.integer * (-1);
-            g_print ("%i is offline!\n", user_id);
-            break;
-          case 51:
-            g_print ("someone changed the chat params,");
-            break;
-          case 61:
-            user_id = event->u.array.values[1]->u.integer;
-            g_print ("%i started to type a msg!\n", user_id);
-            break;
-          case 62:
-            g_print ("someone started to type a msg (again),");
-            break;
-          case 70:
-            g_print ("someone is calling,");
-            break;
-          case 101:
-            g_print ("pavel durov is an idiot,");
-            break;
-          default:
-            g_print ("meteorite%i?,", event_code);
+            switch (event_code)
+              {
+              case 0:
+                g_print ("someone deleted the msg,");
+                break;
+              case 1:
+                g_print ("someone changed flags of the msg,");
+                break;
+              case 2:
+                g_print ("someone set flags of the msg,");
+                break;
+              case 3:
+                g_print ("someone unset flags of the msg,");
+                break;
+              case 4:
+                g_print ("someone added the msg,");
+                break;
+              case 8:
+                user_id = event->u.array.values[1]->u.integer * (-1);
+                g_print ("%i is online!\n", user_id);
+                break;
+              case 9:
+                user_id = event->u.array.values[1]->u.integer * (-1);
+                g_print ("%i is offline!\n", user_id);
+                break;
+              case 51:
+                g_print ("someone changed the chat params,");
+                break;
+              case 61:
+                user_id = event->u.array.values[1]->u.integer;
+                g_print ("%i started to type a msg!\n", user_id);
+                break;
+              case 62:
+                g_print ("someone started to type a msg (again),");
+                break;
+              case 70:
+                g_print ("someone is calling,");
+                break;
+              case 101:
+                g_print ("pavel durov is an idiot,");
+                break;
+              default:
+                g_print ("meteorite%i?,", event_code);
+              }
+            }
           }
         }
-      }
-    } else {
-      g_print ("expired. Let's renew!\n");
-
-      json_value *lp_parsed = NULL;
-      GError *lp_err = NULL;
-
-      if (request_long_poll_data (DURKA_CONNECTION (poll->conn), &poll, &lp_parsed, &lp_err) != 0)
-      {
-        g_error ("Method messages.getLongPollServer returned code %i, %s", lp_err->code, lp_err->message);
-        if (parsed != NULL)
-          json_value_free (lp_parsed);
-        g_error_free (lp_err);
-        //TODO: also free poll
-        return;
-      }
-      if (parsed != NULL)
-        json_value_free (lp_parsed);
+      } else
+        failed = TRUE;
     }
     json_value_free (parsed);
   }
 
-  g_print ("making new poll\n");
-  call = g_object_new (REST_TYPE_DURKA_PROXY_CALL, "proxy", poll->proxy, NULL);
-  rest_proxy_call_set_method (call, "POST");
+  /* Set offline status at disconnect
+   * https://vk.com/dev/account.setOffline */
+  RestProxyCall *call = rest_proxy_new_call (poll->rest);
+  rest_proxy_call_set_function (call, "account.setOffline");
   rest_proxy_call_add_params (call,
-                              "act", "a_check",
-                              "key", poll->key,
-                              "ts", poll->ts,
-                              "wait", "25",
-                              "mode", "2",
+                              "access_token", poll->token,
+                              "format", "json",
+                              "v", "5.0",
                               NULL);
-  if (!rest_proxy_call_async (call, long_poll_listener, NULL, user_data, &resterror)) {
-    g_error ("Cannot make call: %s", error->message);
+  if (!rest_proxy_call_sync (call, &resterror)) {
+    g_error ("Cannot make call: %s", resterror->message);
 	  tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
-        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR); 
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
   }
+  ret = (gchar *) rest_proxy_call_get_payload (call);
+  g_assert (g_utf8_validate (ret, -1, NULL));
+
+#ifdef ENABLE_DEBUG
+  g_print ("account.setOffline: %s\n", ret);
+#endif
+
+  response = json_parse (ret, strlen(ret));
+  g_assert (response->type == json_object);
+
+  if (response->u.object.values[0].value->u.integer == 1)
+    tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
+        TP_CONNECTION_STATUS_REASON_REQUESTED);
+  else
+    tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR );
+
+  g_object_unref (call);
+
+  g_thread_exit (NULL);
+  return TRUE;
 }
 
 static gboolean
 start_connecting (TpBaseConnection *conn,
                   GError **error)
 {
+  GError *resterror = NULL;
+  RestProxyCall *call;
   DurkaConnection *self = DURKA_CONNECTION (conn);
   TpHandleRepoIface *contact_repo = tp_base_connection_get_handles (conn,
       TP_HANDLE_TYPE_CONTACT);
@@ -588,10 +516,6 @@ start_connecting (TpBaseConnection *conn,
   tp_base_connection_change_status (conn, TP_CONNECTION_STATUS_CONNECTING,
       TP_CONNECTION_STATUS_REASON_REQUESTED);
 
-  /* In a real connection manager we'd ask the underlying implementation to
-   * start connecting, then go to state CONNECTED when finished, but here
-   * we can do it immediately. */
-
   self_handle = tp_handle_ensure (contact_repo, self->priv->account,
       NULL, error);
 
@@ -599,42 +523,45 @@ start_connecting (TpBaseConnection *conn,
     return FALSE;
 
   self->priv->rest = rest_proxy_new ("https://api.vk.com/method/", FALSE);
+  call = rest_proxy_new_call (self->priv->rest);
 
-  /* Gettinginfo about me         */
-  /* https://vk.com/dev/users.get */
+  gchar *ret = NULL;
 
-  json_value *parsed = NULL;
-  GError *err = NULL;
-  PollData *data = NULL;
-
-  if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
-    g_error ("Method users.get returned code %i, %s",err->code,err->message);
-    g_error_free (err);
-    if (parsed != NULL)
-      json_value_free (parsed);
+  /* Gettinginfo about me
+   * https://vk.com/dev/users.get */
+  rest_proxy_call_set_function (call, "users.get");
+  rest_proxy_call_add_params (call,
+                              "fields", "photo_100",
+                              "access_token", self->priv->token,
+                              "format", "json",
+                              "v", "5.0",
+                              NULL);
+  if (!rest_proxy_call_sync (call, &resterror)) {
+    g_error ("Cannot make call: %s", resterror->message);
+	  tp_base_connection_change_status (conn, TP_CONNECTION_STATUS_DISCONNECTED,
+        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
   }
-  if (parsed != NULL)
-    json_value_free (parsed);
+	ret = (gchar *) rest_proxy_call_get_payload (call);
+  g_assert (g_utf8_validate (ret, -1, NULL));
 
-  /* Getting data required for connection to a Long Poll server */
-  /* https://vk.com/dev/messages.getLongPollServer              */
+#ifdef ENABLE_DEBUG
+  setlocale (LC_ALL, "");
+  g_print ("users.get: %s\n", ret);
+#endif
 
-  if (request_long_poll_data (self, &data, &parsed, &err) !=0) {
-    g_error ("Method messages.getLongPollServer returned code %i, %s",err->code, err->message);
-    if (parsed != NULL)
-      json_value_free (parsed);
-    g_error_free (err);
-    json_value_free (parsed);
-  } else {
-    data->conn = conn;
-    long_poll_listener (NULL, NULL, NULL, data);
-    json_value_free (parsed);
-  }
+  self->priv->data = g_slice_new (PollData);
+  PollData *poll = self->priv->data;
+  poll->rest = self->priv->rest;
+  poll->conn = conn;
+  poll->token = self->priv->token;
+  poll->timer = g_timer_new ();
+  poll->exit = FALSE;
+
+  self->priv->thread = g_thread_new ("polling", (GThreadFunc) polling, self->priv->data);
 
   tp_base_connection_set_self_handle (conn, self_handle);
 
-  tp_base_connection_change_status (conn, TP_CONNECTION_STATUS_CONNECTED,
-      TP_CONNECTION_STATUS_REASON_REQUESTED);
+  g_object_unref (call);
 
   return TRUE;
 }
@@ -642,10 +569,11 @@ start_connecting (TpBaseConnection *conn,
 static void
 shut_down (TpBaseConnection *conn)
 {
-  /* In a real connection manager we'd ask the underlying implementation to
-   * start shutting down, then call this function when finished, but here
-   * we can do it immediately. */
   DurkaConnection *self = DURKA_CONNECTION (conn);
+  PollData *poll = self->priv->data;
+  poll->exit = TRUE;
+  soup_session_cancel_message (poll->session, poll->msg, SOUP_STATUS_CANCELLED);
+  g_thread_join (self->priv->thread);
   g_object_unref (self->priv->rest);
   tp_base_connection_finish_shutdown (conn);
 }
@@ -795,7 +723,7 @@ static const gchar *interfaces_always_present[] = {
 const gchar * const *
 durka_connection_get_possible_interfaces (void)
 {
-  /* in this eri CM we don't have any extra interfaces that are sometimes,
+  /* in this durka CM we don't have any extra interfaces that are sometimes,
    * but not always, present */
   return interfaces_always_present;
 }

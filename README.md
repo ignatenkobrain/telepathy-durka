@@ -1,5 +1,5 @@
 telepathy-durka
-===============
+=============
 
 VK Connection Manager for Telepathy.
 
@@ -12,6 +12,7 @@ Build requirements
 * telepathy-glib-devel
 * dbus-devel
 * libxml2-devel
+* json-parser-devel
 
 Requirements
 ------------
@@ -19,6 +20,7 @@ Requirements
 * libxml2
 * telepathy-glib
 * dbus
+* json-parser
 
 How to install
 --------------
@@ -46,6 +48,7 @@ At adding account use wrong password.
 Open link: https://oauth.vk.com/authorize?client_id=3821026&scope=friends,messages,offline&redirect_uri=https://oauth.vk.com/blank.html&v=5.0&response_type=token
 
 In response you will have redirect and in address-string you will have alike:
+
 ```
 #access_token=[THIS]&expires_in=0&user_id=1361145746
 ```

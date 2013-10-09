@@ -2,6 +2,8 @@ project(telepahty-durka C)
 
 cmake_minimum_required(VERSION 2.6)
 
+set(CMAKE_INSTALL_PREFIX "/usr")
+
 set(DURKA_MAJOR_VERSION 0)
 set(DURKA_MINOR_VERSION 0)
 set(DURKA_MICRO_VERSION 0)
