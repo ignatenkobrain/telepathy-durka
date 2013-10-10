@@ -14,7 +14,7 @@ G_DEFINE_TYPE (DurkaConnectionManager,
     durka_connection_manager,
     TP_TYPE_BASE_CONNECTION_MANAGER)
 
-struct _DurkaConnectionManagerPrivaten {
+struct _DurkaConnectionManagerPrivate {
   int dummy;
 };
 
