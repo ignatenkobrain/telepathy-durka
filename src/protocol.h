@@ -6,28 +6,25 @@
 
 G_BEGIN_DECLS
 
-typedef struct _DurkaProtocol
-    DurkaProtocol;
-typedef struct _DurkaProtocolPrivate
-    DurkaProtocolPrivate;
-typedef struct _DurkaProtocolClass
-    DurkaProtocolClass;
-typedef struct _DurkaProtocolClassPrivate
-    DurkaProtocolClassPrivate;
+  typedef struct _DurkaProtocol DurkaProtocol;
+  typedef struct _DurkaProtocolPrivate DurkaProtocolPrivate;
+  typedef struct _DurkaProtocolClass DurkaProtocolClass;
+  typedef struct _DurkaProtocolClassPrivate DurkaProtocolClassPrivate;
 
-struct _DurkaProtocolClass {
+  struct _DurkaProtocolClass {
     TpBaseProtocolClass parent_class;
 
     DurkaProtocolClassPrivate *priv;
-};
+  };
 
-struct _DurkaProtocol {
+  struct _DurkaProtocol {
     TpBaseProtocol parent;
 
     DurkaProtocolPrivate *priv;
-};
+  };
 
-GType durka_protocol_get_type (void);
+  GType
+  durka_protocol_get_type (void);
 
 #define DURKA_TYPE_PROTOCOL \
     (durka_protocol_get_type ())
@@ -50,9 +47,10 @@ GType durka_protocol_get_type (void);
         DURKA_TYPE_PROTOCOL, \
         DurkaProtocolClass))
 
-gboolean durka_protocol_check_contact_id (const gchar *id,
-    gchar **normal,
-    GError **error);
+  gboolean
+  durka_protocol_check_contact_id (const gchar *id,
+                                   gchar **normal,
+                                   GError **error);
 
 G_END_DECLS
 

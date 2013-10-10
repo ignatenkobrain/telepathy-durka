@@ -6,24 +6,22 @@
 
 G_BEGIN_DECLS
 
-typedef struct _DurkaConnectionManager
-    DurkaConnectionManager;
-typedef struct _DurkaConnectionManagerClass
-    DurkaConnectionManagerClass;
-typedef struct _DurkaConnectionManagerPrivate
-    DurkaConnectionManagerPrivate;
+  typedef struct _DurkaConnectionManager DurkaConnectionManager;
+  typedef struct _DurkaConnectionManagerClass DurkaConnectionManagerClass;
+  typedef struct _DurkaConnectionManagerPrivate DurkaConnectionManagerPrivate;
 
-struct _DurkaConnectionManagerClass {
+  struct _DurkaConnectionManagerClass {
     TpBaseConnectionManagerClass parent_class;
-};
+  };
 
-struct _DurkaConnectionManager {
+  struct _DurkaConnectionManager {
     TpBaseConnectionManager parent;
 
     DurkaConnectionManagerPrivate *priv;
-};
+  };
 
-GType durka_connection_manager_get_type (void);
+  GType
+  durka_connection_manager_get_type (void);
 
 #define DURKA_TYPE_CONNECTION_MANAGER \
   (durka_connection_manager_get_type ())

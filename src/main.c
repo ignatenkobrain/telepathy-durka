@@ -5,9 +5,7 @@
 static TpBaseConnectionManager *
 construct_cm (void)
 {
-  return (TpBaseConnectionManager *) g_object_new (
-      DURKA_TYPE_CONNECTION_MANAGER,
-      NULL);
+  return (TpBaseConnectionManager *) g_object_new (DURKA_TYPE_CONNECTION_MANAGER, NULL);
 }
 
 int
@@ -25,7 +23,6 @@ main (int argc,
     tp_debug_set_persistent (TRUE);
 #endif
 
-  return tp_run_connection_manager ("telepathy-durka", VERSION,
-      construct_cm, argc, argv);
+  return tp_run_connection_manager ("telepathy-durka", VERSION, construct_cm, argc, argv);
 }
 

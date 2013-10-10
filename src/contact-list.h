@@ -7,21 +7,22 @@
 
 G_BEGIN_DECLS
 
-typedef struct _DurkaContactList DurkaContactList;
-typedef struct _DurkaContactListClass DurkaContactListClass;
-typedef struct _DurkaContactListPrivate DurkaContactListPrivate;
+  typedef struct _DurkaContactList DurkaContactList;
+  typedef struct _DurkaContactListClass DurkaContactListClass;
+  typedef struct _DurkaContactListPrivate DurkaContactListPrivate;
 
-struct _DurkaContactListClass {
+  struct _DurkaContactListClass {
     TpBaseContactListClass parent_class;
-};
+  };
 
-struct _DurkaContactList {
+  struct _DurkaContactList {
     TpBaseContactList parent;
 
     DurkaContactListPrivate *priv;
-};
+  };
 
-GType durka_contact_list_get_type (void);
+  GType
+  durka_contact_list_get_type (void);
 
 #define DURKA_TYPE_CONTACT_LIST \
   (durka_contact_list_get_type ())
@@ -39,25 +40,29 @@ GType durka_contact_list_get_type (void);
   (G_TYPE_INSTANCE_GET_CLASS ((obj), DURKA_TYPE_CONTACT_LIST, \
                               DurkaContactListClass))
 
-/* this enum must be kept in sync with the array _statuses in
- * contact-list.c */
-typedef enum {
+  /* this enum must be kept in sync with the array _statuses in
+   * contact-list.c */
+  typedef enum {
     DURKA_CONTACT_LIST_PRESENCE_OFFLINE = 0,
     DURKA_CONTACT_LIST_PRESENCE_UNKNOWN,
     DURKA_CONTACT_LIST_PRESENCE_ERROR,
     DURKA_CONTACT_LIST_PRESENCE_AWAY,
     DURKA_CONTACT_LIST_PRESENCE_AVAILABLE
-} DurkaContactListPresence;
+  } DurkaContactListPresence;
 
-const TpPresenceStatusSpec *durka_contact_list_presence_statuses (
-    void);
+  const TpPresenceStatusSpec *
+  durka_contact_list_presence_statuses (void);
 
-DurkaContactListPresence durka_contact_list_get_presence (
-    DurkaContactList *self, TpHandle contact);
-const gchar *durka_contact_list_get_alias (
-    DurkaContactList *self, TpHandle contact);
-void durka_contact_list_set_alias (
-    DurkaContactList *self, TpHandle contact, const gchar *alias);
+  DurkaContactListPresence
+  durka_contact_list_get_presence (DurkaContactList *self,
+                                   TpHandle contact);
+  const gchar *
+  durka_contact_list_get_alias (DurkaContactList *self,
+                                TpHandle contact);
+  void
+  durka_contact_list_set_alias (DurkaContactList *self,
+                                TpHandle contact,
+                                const gchar *alias);
 
 G_END_DECLS
 

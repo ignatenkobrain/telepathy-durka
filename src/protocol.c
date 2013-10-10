@@ -7,29 +7,24 @@
 #include "conn.h"
 #include "contact-list.h"
 
-G_DEFINE_TYPE (DurkaProtocol,
-    durka_protocol,
-    TP_TYPE_BASE_PROTOCOL)
+G_DEFINE_TYPE (DurkaProtocol, durka_protocol, TP_TYPE_BASE_PROTOCOL)
 
 static void
-durka_protocol_init (
-    DurkaProtocol *self)
+durka_protocol_init (DurkaProtocol *self)
 {
 }
 
 gboolean
 durka_protocol_check_contact_id (const gchar *id,
-    gchar **normal,
-    GError **error)
+                                 gchar **normal,
+                                 GError **error)
 {
   g_return_val_if_fail (id != NULL, FALSE);
 
-  if (id[0] == '\0')
-    {
-      g_set_error (error, TP_ERROR, TP_ERROR_INVALID_HANDLE,
-          "ID must not be empty");
-      return FALSE;
-    }
+  if (id[0] == '\0') {
+    g_set_error (error, TP_ERROR, TP_ERROR_INVALID_HANDLE, "ID must not be empty");
+    return FALSE;
+  }
 
   if (normal != NULL)
     *normal = g_utf8_normalize (id, -1, G_NORMALIZE_ALL_COMPOSE);
@@ -80,8 +75,8 @@ get_parameters (TpBaseProtocol *self)
 
 static TpBaseConnection *
 new_connection (TpBaseProtocol *protocol,
-    GHashTable *asv,
-    GError **error)
+                GHashTable *asv,
+                GError **error)
 {
   DurkaConnection *conn;
   const gchar *account;
@@ -94,21 +89,20 @@ new_connection (TpBaseProtocol *protocol,
   /* telepathy-glib checked this for us */
   g_assert (account != NULL);
 
-  conn = DURKA_CONNECTION (
-      g_object_new (DURKA_TYPE_CONNECTION,
-        "account", account,
-        "protocol", tp_base_protocol_get_name (protocol),
-        "password", password,
-        "token", token,
-        NULL));
+  conn = DURKA_CONNECTION (g_object_new (DURKA_TYPE_CONNECTION,
+                                         "account", account,
+                                         "protocol", tp_base_protocol_get_name (protocol),
+                                         "password", password,
+                                         "token", token,
+                                         NULL));
 
   return (TpBaseConnection *) conn;
 }
 
 static gchar *
 normalize_contact (TpBaseProtocol *self G_GNUC_UNUSED,
-    const gchar *contact,
-    GError **error)
+                   const gchar *contact,
+                   GError **error)
 {
   gchar *normal;
 
@@ -120,39 +114,35 @@ normalize_contact (TpBaseProtocol *self G_GNUC_UNUSED,
 
 static gchar *
 identify_account (TpBaseProtocol *self G_GNUC_UNUSED,
-    GHashTable *asv,
-    GError **error)
+                  GHashTable *asv,
+                  GError **error)
 {
   const gchar *account = tp_asv_get_string (asv, "account");
 
   if (account != NULL)
     return normalize_contact (self, account, error);
 
-  g_set_error (error, TP_ERROR, TP_ERROR_INVALID_ARGUMENT,
-      "'account' parameter not given");
+  g_set_error (error, TP_ERROR, TP_ERROR_INVALID_ARGUMENT, "'account' parameter not given");
   return NULL;
 }
 
 static void
 get_connection_details (TpBaseProtocol *self G_GNUC_UNUSED,
-    GStrv *connection_interfaces,
-    GType **channel_managers,
-    gchar **icon_name,
-    gchar **english_name,
-    gchar **vcard_field)
+                        GStrv *connection_interfaces,
+                        GType **channel_managers,
+                        gchar **icon_name,
+                        gchar **english_name,
+                        gchar **vcard_field)
 {
-  if (connection_interfaces != NULL)
-    {
-      *connection_interfaces = g_strdupv (
-          (GStrv) durka_connection_get_possible_interfaces ());
-    }
+  if (connection_interfaces != NULL) {
+    *connection_interfaces = g_strdupv ((GStrv) durka_connection_get_possible_interfaces ());
+  }
 
-  if (channel_managers != NULL)
-    {
-      GType types[] = { DURKA_TYPE_CONTACT_LIST, G_TYPE_INVALID };
+  if (channel_managers != NULL) {
+    GType types[] = {DURKA_TYPE_CONTACT_LIST, G_TYPE_INVALID};
 
-      *channel_managers = g_memdup (types, sizeof (types));
-    }
+    *channel_managers = g_memdup (types, sizeof (types));
+  }
 
   if (icon_name != NULL)
     *icon_name = g_strdup ("vk");
@@ -165,11 +155,9 @@ get_connection_details (TpBaseProtocol *self G_GNUC_UNUSED,
 }
 
 static void
-durka_protocol_class_init (
-    DurkaProtocolClass *klass)
+durka_protocol_class_init (DurkaProtocolClass *klass)
 {
-  TpBaseProtocolClass *base_class =
-      (TpBaseProtocolClass *) klass;
+  TpBaseProtocolClass *base_class = (TpBaseProtocolClass *) klass;
 
   base_class->get_parameters = get_parameters;
   base_class->new_connection = new_connection;
