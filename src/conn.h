@@ -3,6 +3,7 @@
 
 #include <glib-object.h>
 #include <telepathy-glib/telepathy-glib.h>
+#include <json.h>
 
 G_BEGIN_DECLS
 
@@ -43,6 +44,9 @@ GType durka_connection_get_type (void);
 #define DURKA_CONNECTION_GET_CLASS(obj) \
   (G_TYPE_INSTANCE_GET_CLASS ((obj), DURKA_TYPE_CONNECTION, \
                               DurkaConnectionClass))
+
+gint invoke_vk_api (DurkaConnection *self, const gchar *method,
+    json_value **response, GError **error, ...);
 
 gchar *durka_normalize_contact (TpHandleRepoIface *repo,
     const gchar *id, gpointer context, GError **error);

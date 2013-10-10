@@ -2,9 +2,11 @@
 
 #include "conn.h"
 
+// TODO: make pull to json-parser
+#include "json.h"
+
 #include <dbus/dbus-glib.h>
-#include <rest/rest-proxy.h> 
-#include <json.h>
+#include <rest/rest-proxy.h>
 #include <string.h>
 // TODO: drop libsoup. http://vk.com/support?act=show&id=7863767
 #include <libsoup/soup.h>
@@ -250,23 +252,7 @@ create_channel_managers (TpBaseConnection *conn)
   return ret;
 }
 
-static json_value *
-json_value_find (const json_value *parent,
-                             const gchar *name)
-{
-    guint i;
-
-    if ((parent == NULL) || (parent->type != json_object))
-        return NULL;
-
-    for (i = 0; i < (guint) parent->u.object.length; i++)
-      if (g_strcmp0 (parent->u.object.values[i].name, name) == 0)
-        return parent->u.object.values[i].value;
-
-    return NULL;
-}
-
-static gint
+gint
 invoke_vk_api (DurkaConnection *self,
                const gchar *method,
                json_value **response,

@@ -25,6 +25,7 @@ message(STATUS "Version: ${DURKA_VERSION}")
 include(FindPkgConfig)
 
 SET(SRCS
+        src/json.c
         src/contact-list.c
         src/conn.c
         src/protocol.c
@@ -33,6 +34,7 @@ SET(SRCS
    )
 
 set(HDRS
+        src/json.h
         src/contact-list.h
         src/conn.h
         src/protocol.h
