@@ -18,6 +18,7 @@
 #include <telepathy-glib/telepathy-glib.h>
 
 #include "contact-list.h"
+#include "conn-contact-info.h"
 #include "protocol.h"
 
 static void
@@ -29,6 +30,8 @@ G_DEFINE_TYPE_WITH_CODE (DurkaConnection,
     TP_TYPE_BASE_CONNECTION,
     G_IMPLEMENT_INTERFACE (TP_TYPE_SVC_CONNECTION_INTERFACE_ALIASING,
       init_aliasing);
+    G_IMPLEMENT_INTERFACE (TP_TYPE_SVC_CONNECTION_INTERFACE_CONTACT_INFO,
+      conn_contact_info_iface_init)
     G_IMPLEMENT_INTERFACE (TP_TYPE_SVC_CONNECTION_INTERFACE_CONTACTS,
       tp_contacts_mixin_iface_init);
     G_IMPLEMENT_INTERFACE (TP_TYPE_SVC_CONNECTION_INTERFACE_CONTACT_LIST,
@@ -144,6 +147,8 @@ finalize (GObject *object)
   g_free (self->priv->account);
   g_free (self->priv->password);
   g_free (self->priv->token);
+
+  conn_contact_info_finalize (self);
 
   G_OBJECT_CLASS (durka_connection_parent_class)->finalize (object);
 }
@@ -565,6 +570,34 @@ aliasing_fill_contact_attributes (GObject *object,
   }
 }
 
+static GObject *
+constructor (GType type,
+             guint n_construct_properties,
+             GObjectConstructParam *construct_params)
+{
+  DurkaConnection *self =
+      DURKA_CONNECTION (
+          G_OBJECT_CLASS (durka_connection_parent_class)->constructor (type, n_construct_properties, construct_params));
+  DurkaConnectionPrivate *priv = G_TYPE_INSTANCE_GET_PRIVATE(self, DURKA_TYPE_CONNECTION,
+                                                             DurkaConnectionPrivate);
+  TpBaseConnection *base = TP_BASE_CONNECTION(self);
+
+  //DEBUG("Post-construction: (DurkaConnection *)%p", self);
+
+  tp_contacts_mixin_init (G_OBJECT (self), G_STRUCT_OFFSET (DurkaConnection, contacts_mixin));
+
+  tp_base_connection_register_with_contacts_mixin (base);
+  tp_base_contact_list_mixin_register_with_contacts_mixin (base);
+
+  conn_contact_info_init (self);
+
+
+  tp_base_connection_add_possible_client_interest (base,
+      TP_IFACE_QUARK_CONNECTION_INTERFACE_MAIL_NOTIFICATION);
+
+  return (GObject *) self;
+}
+
 static void
 constructed (GObject *object)
 {
@@ -657,8 +690,9 @@ set_own_status (GObject *object,
   return TRUE;
 }
 
-static const gchar *interfaces_always_present[] = {
+static const gchar *implemented_interfaces[] = {
     TP_IFACE_CONNECTION_INTERFACE_ALIASING,
+    TP_IFACE_CONNECTION_INTERFACE_CONTACT_INFO
     TP_IFACE_CONNECTION_INTERFACE_CONTACTS,
     TP_IFACE_CONNECTION_INTERFACE_CONTACT_LIST,
     TP_IFACE_CONNECTION_INTERFACE_CONTACT_GROUPS,
@@ -668,8 +702,10 @@ static const gchar *interfaces_always_present[] = {
     TP_IFACE_CONNECTION_INTERFACE_SIMPLE_PRESENCE,
     NULL};
 
+static const gchar **interfaces_always_present = implemented_interfaces;
+
 const gchar * const *
-durka_connection_get_possible_interfaces (void)
+durka_connection_get_implemented_interfaces (void)
 {
   /* in this durka CM we don't have any extra interfaces that are sometimes,
    * but not always, present */
@@ -699,9 +735,10 @@ durka_connection_class_init (DurkaConnectionClass *klass)
 
   object_class->get_property = get_property;
   object_class->set_property = set_property;
+  object_class->constructor = constructor;
   object_class->constructed = constructed;
   object_class->finalize = finalize;
-  g_type_class_add_private (klass, sizeof (DurkaConnectionPrivate));
+  object_class->dispose = NULL; //TODO: implement that
 
   base_class->create_handle_repos = create_handle_repos;
   base_class->get_unique_connection_name = get_unique_connection_name;
@@ -709,6 +746,8 @@ durka_connection_class_init (DurkaConnectionClass *klass)
   base_class->start_connecting = start_connecting;
   base_class->shut_down = shut_down;
   base_class->get_interfaces_always_present = get_interfaces_always_present;
+
+  g_type_class_add_private (klass, sizeof (DurkaConnectionPrivate));
 
   param_spec = g_param_spec_string ("account", "Account login", "The username of this user", NULL,
                                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
@@ -723,12 +762,47 @@ durka_connection_class_init (DurkaConnectionClass *klass)
                                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   g_object_class_install_property (object_class, PROP_TOKEN, param_spec);
 
+  /*static TpDBusPropertiesMixinPropImpl location_props[] = {
+        { "LocationAccessControlTypes", NULL, NULL },
+        { "LocationAccessControl", NULL, NULL },
+        { "SupportedLocationFeatures", NULL, NULL },
+        { NULL }
+  };*/ //FIXME: not sure if we need it
+
+  static TpDBusPropertiesMixinIfaceImpl prop_interfaces[] = {
+        /* { TP_IFACE_CONNECTION_INTERFACE_LOCATION,
+          conn_location_properties_getter,
+          conn_location_properties_setter,
+          location_props,
+        },*/ //FIXME: not sure if we need it
+        /*{ TP_IFACE_CONNECTION_INTERFACE_AVATARS,
+          conn_avatars_properties_getter,
+          NULL,
+          NULL,
+        },*/ //TODO: avatars
+        { TP_IFACE_CONNECTION_INTERFACE_CONTACT_INFO,
+          conn_contact_info_properties_getter,
+          NULL,
+          NULL,
+        },
+        { NULL }
+  };
+
+  prop_interfaces[0].props = conn_contact_info_properties;
+
+  klass->properties_mixin.interfaces = prop_interfaces;
+  tp_dbus_properties_mixin_class_init (object_class,
+      G_STRUCT_OFFSET (DurkaConnectionClass, properties_mixin));
+
   tp_contacts_mixin_class_init (object_class, G_STRUCT_OFFSET (DurkaConnectionClass, contacts_mixin));
 
+  //TODO: this should go into conn-presence class
   tp_presence_mixin_class_init (object_class, G_STRUCT_OFFSET (DurkaConnectionClass, presence_mixin),
                                 status_available, get_contact_statuses, set_own_status,
                                 durka_contact_list_presence_statuses ());
   tp_presence_mixin_simple_presence_init_dbus_properties (object_class);
+
+  conn_contact_info_class_init (klass);
 
   tp_base_contact_list_mixin_class_init (base_class);
 }

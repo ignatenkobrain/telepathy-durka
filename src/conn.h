@@ -13,6 +13,7 @@ G_BEGIN_DECLS
 
   struct _DurkaConnectionClass {
     TpBaseConnectionClass parent_class;
+    TpDBusPropertiesMixinClass properties_mixin;
     TpPresenceMixinClass presence_mixin;
     TpContactsMixinClass contacts_mixin;
   };
@@ -58,7 +59,7 @@ G_BEGIN_DECLS
                            GError **error);
 
   const gchar * const *
-  durka_connection_get_possible_interfaces (void);
+  durka_connection_get_implemented_interfaces (void);
 
 G_END_DECLS
 

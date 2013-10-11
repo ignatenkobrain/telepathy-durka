@@ -135,7 +135,7 @@ get_connection_details (TpBaseProtocol *self G_GNUC_UNUSED,
                         gchar **vcard_field)
 {
   if (connection_interfaces != NULL) {
-    *connection_interfaces = g_strdupv ((GStrv) durka_connection_get_possible_interfaces ());
+    *connection_interfaces = g_strdupv ((GStrv) durka_connection_get_implemented_interfaces ());
   }
 
   if (channel_managers != NULL) {

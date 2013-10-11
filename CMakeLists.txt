@@ -28,6 +28,7 @@ SET(SRCS
         src/json.c
         src/contact-list.c
         src/conn.c
+        src/conn-contact-info.c
         src/protocol.c
         src/connection-manager.c
         src/main.c
@@ -37,6 +38,7 @@ set(HDRS
         src/json.h
         src/contact-list.h
         src/conn.h
+        src/conn-contact-info.h
         src/protocol.h
         src/connection-manager.h
    )
