@@ -5,6 +5,8 @@
 
 #define GETTEXT_PACKAGE
 #cmakedefine ENABLE_DEBUG
+#define APP_ID "@APP_ID@"
+#define APP_SECRET "@APP_SECRET@"
 
 #ifndef ENABLE_DEBUG
 #  define NDEBUG

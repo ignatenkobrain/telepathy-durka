@@ -1,3 +1,5 @@
+// vim:expandtab:tabstop=2:shiftwidth=2:softtabstop=2
+
 #include "config.h"
 
 #include "conn.h"
@@ -253,7 +255,7 @@ invoke_vk_api (DurkaConnection *self,
   RestProxyCall *call = rest_proxy_new_call (self->priv->rest);
   rest_proxy_call_set_function (call, method);
   rest_proxy_call_set_method (call, "POST");
-  rest_proxy_call_add_params (call, "access_token", self->priv->token, "format", "json", "v", "5.2", NULL);
+  rest_proxy_call_add_params (call, "access_token", self->priv->token, "format", "json", "v", "5.3", NULL);
 
   va_start (params, error);
   while ((key = va_arg (params, const gchar *)) != NULL) {
@@ -307,7 +309,7 @@ polling (const gpointer data)
   GError *resterror = NULL;
   gboolean failed = TRUE;
   guint event_code = 0;
-  gint user_id = NULL;
+  gint user_id = 0;
   gboolean first_time = TRUE;
 
   g_timer_start (poll->timer);
@@ -509,10 +511,62 @@ start_connecting (TpBaseConnection *conn,
   setlocale (LC_ALL, "");
 #endif
 
+  GError *err = NULL;
+  GError *resterror = NULL;
+
+  if (!self->priv->token) {
+    RestProxy *rest = rest_proxy_new ("https://oauth.vk.com/", FALSE);
+    RestProxyCall *call = rest_proxy_new_call (rest);
+    rest_proxy_call_set_function (call, "token");
+    rest_proxy_call_set_method (call, "GET");
+    rest_proxy_call_add_params (call,
+                                "grant_type", "password",
+                                "client_id", APP_ID,
+                                "client_secret", APP_SECRET,
+                                "username", self->priv->account,
+                                "password", self->priv->password,
+                                "v", "5.3",
+                                NULL);
+    if (!rest_proxy_call_sync (call, &resterror)) {
+      g_error ("Cannot make call: %s", resterror->message);
+      tp_base_connection_change_status (TP_BASE_CONNECTION (self), TP_CONNECTION_STATUS_DISCONNECTED,
+                                        TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
+      g_object_unref (call);
+      g_object_unref (rest);
+      return -1;
+    }
+
+    gchar *ret = NULL;
+    ret = (gchar *) rest_proxy_call_get_payload (call);
+
+    g_assert (g_utf8_validate (ret, -1, NULL));
+
+#ifdef ENABLE_DEBUG
+    g_print ("Auth: %s\n", ret);
+#endif
+
+    json_value *response = json_parse (ret, strlen (ret));
+    g_object_unref (call);
+    g_object_unref (rest);
+
+    g_assert (response->type == json_object);
+
+    if (resterror)
+      g_error_free (resterror);
+
+    if (json_value_find (response, "access_token"))
+      self->priv->token = g_strdup (json_value_find (response, "access_token")->u.string.ptr);
+    else {
+      json_value *l_error = json_value_find (response, "error");
+      resterror = g_error_new (1, json_value_find (l_error, "error_code")->u.integer, "%s",
+                               json_value_find (l_error, "error_msg")->u.string.ptr);
+      return resterror->code;
+    }
+  }
+
   self->priv->rest = rest_proxy_new ("https://api.vk.com/method/", FALSE);
 
   json_value *parsed = NULL;
-  GError *err = NULL;
 
   if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
     //TODO: error handle

@@ -58,6 +58,9 @@ set(DURKA_TELEPATHY_EXEC "${CMAKE_INSTALL_PREFIX}/libexec/telepathy-durka" CACHE
 
 set(ENABLE_DEBUG true CACHE BOOLEAN "Enable debug messages and assertions")
 
+set(APP_ID "3821026")
+set(APP_SECRET "ct9vuyd9UNYXddZF6o46")
+
 configure_file("${CMAKE_SOURCE_DIR}/data/org.freedesktop.Telepathy.ConnectionManager.durka.service.in"
                "${CMAKE_BINARY_DIR}/org.freedesktop.Telepathy.ConnectionManager.durka.service")
 configure_file("${CMAKE_SOURCE_DIR}/src/config.h.in"
