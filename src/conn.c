@@ -4,9 +4,6 @@
 
 #include "conn.h"
 
-// TODO: make pull to json-parser
-#include "json.h"
-
 #include <dbus/dbus-glib.h>
 #include <rest/rest-proxy.h>
 #include <string.h>
@@ -244,18 +241,22 @@ create_channel_managers (TpBaseConnection *conn)
 gint
 invoke_vk_api (DurkaConnection *self,
                const gchar *method,
-               json_value **response,
+               JsonReader *reader,
                GError **error,
                ...)
 {
   va_list params;
   const gchar *key = NULL;
   const gchar *value = NULL;
+  gchar *ret = NULL;
+  gint err_code = 0;
+  gchar *err_msg = NULL;
+  JsonParser *parser = NULL;
 
   RestProxyCall *call = rest_proxy_new_call (self->priv->rest);
   rest_proxy_call_set_function (call, method);
   rest_proxy_call_set_method (call, "POST");
-  rest_proxy_call_add_params (call, "access_token", self->priv->token, "format", "json", "v", "5.3", NULL);
+  rest_proxy_call_add_params (call, "access_token", self->priv->token, "format", "json", "v", API_VER, NULL);
 
   va_start (params, error);
   while ((key = va_arg (params, const gchar *)) != NULL) {
@@ -272,7 +273,6 @@ invoke_vk_api (DurkaConnection *self,
     return -1;
   }
 
-  gchar *ret = NULL;
   ret = (gchar *) rest_proxy_call_get_payload (call);
 
   g_assert (g_utf8_validate (ret, -1, NULL));
@@ -281,31 +281,41 @@ invoke_vk_api (DurkaConnection *self,
   g_print ("From %s: %s\n", method, ret);
 #endif
 
-  *response = json_parse (ret, strlen (ret));
-  g_object_unref (call);
+  parser = json_parser_new ();
+  if (json_parser_load_from_data (parser, ret, -1, NULL)) {
+    if (*error)
+      g_error_free (*error);
+    reader = json_reader_new (NULL);
+    json_reader_set_root (reader, json_parser_get_root (parser));
+    if (json_reader_read_member (reader, "error")) {
+      json_reader_read_member (reader, "error_code");
+      err_code = json_reader_get_int_value (reader);
+      json_reader_end_member (reader);
+      json_reader_read_member (reader, "error_msg");
+      err_msg = g_strdup (json_reader_get_string_value (reader));
+      json_reader_end_member (reader);
+      *error = g_error_new (1, err_code, "%s",
+                            err_msg);
+      return (*error)->code;
+    } else {
+      json_reader_end_member (reader);
+    }
+    if (json_reader_read_member (reader, "response")) {
+      return 0;
+    } else {
+      json_reader_end_member (reader);
+    }
+  }
 
-  g_assert ((*response)->type == json_object);
-
-  if (*error)
-    g_error_free (*error);
-
-  if (json_value_find (*response, "response"))
-    return 0;
-
-  json_value *l_error = json_value_find (*response, "error");
-  *error = g_error_new (1, json_value_find (l_error, "error_code")->u.integer, "%s",
-                        json_value_find (l_error, "error_msg")->u.string.ptr);
-  return (*error)->code;
+  return -1;
 }
 
 static gboolean
 polling (const gpointer data)
 {
   PollData *poll = data;
-  json_value *parsed;
-  json_value *response;
-  json_value *updates;
-  json_value *temp;
+  JsonReader *response = NULL;
+  JsonParser *parser = NULL;
   GError *resterror = NULL;
   gboolean failed = TRUE;
   guint event_code = 0;
@@ -318,51 +328,47 @@ polling (const gpointer data)
     if (failed) {
       /* Getting data required for connection to a Long Poll server
        * https://vk.com/dev/messages.getLongPollServer */
-      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "messages.getLongPollServer", &parsed, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "messages.getLongPollServer", response, &resterror, NULL)) {
         //TODO: error handle
         g_error ("Method messages.getLongPollServer returned %i, %s", resterror->code, resterror->message);
         return FALSE;
       }
 
-      response = json_value_find (parsed, "response");
+      if (json_reader_read_member (response, "key")) {
+        poll->key = g_strdup (json_reader_get_string_value (response));
+        json_reader_end_member (response);
+      }
+      if (json_reader_read_member (response, "server")) {
+        poll->server = g_strdup (json_reader_get_string_value (response));
+        json_reader_end_member (response);
+      }
+      if (json_reader_read_member (response, "ts")) {
+        poll->ts = g_strdup_printf ("%li", json_reader_get_int_value (response));
+        json_reader_end_member (response);
+      }
 
-      temp = json_value_find (response, "key");
-      g_assert (temp != NULL);
-      poll->key = g_strdup (temp->u.string.ptr);
-
-      temp = json_value_find (response, "server");
-      g_assert (temp != NULL);
-      poll->server = g_strdup (temp->u.string.ptr);
-
-      temp = json_value_find (response, "ts");
-      g_assert (temp != NULL);
-      poll->ts = g_strdup_printf ("%li", temp->u.integer);
-
-      json_value_free (parsed);
+      g_object_unref (response);
       failed = FALSE;
-
     }
 
     /* Set online status every 14 mins
      * https://vk.com/dev/account.setOnline */
     if (g_timer_elapsed (poll->timer, NULL) >= 840 || first_time) {
       first_time = FALSE;
-      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOnline", &parsed, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOnline", response, &resterror, NULL)) {
         //TODO: error handle
         g_error ("Method account.setOnline returned %i, %s", resterror->code, resterror->message);
         return FALSE;
       }
 
-      response = json_value_find (parsed, "response");
-
-      if (response->u.integer == 1)
+      if (json_reader_get_int_value (response) == 1)
         tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_CONNECTED,
                                           TP_CONNECTION_STATUS_REASON_REQUESTED);
       else
         tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
                                           TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
 
-      json_value_free (parsed);
+      g_object_unref (response);
     }
 
 #ifdef ENABLE_DEBUG
@@ -383,40 +389,44 @@ polling (const gpointer data)
       g_print ("response: %s\n", poll->msg->response_body->data);
 #endif
 
-      parsed = json_parse (poll->msg->response_body->data, strlen (poll->msg->response_body->data));
-      g_assert (parsed->type == json_object);
-
-      if (json_value_find (parsed, "failed"))
+      parser = json_parser_new ();
+      if (!json_parser_load_from_data (parser, poll->msg->response_body->data, -1, NULL))
+        return -1;
+      response = json_reader_new (NULL);
+      json_reader_set_root (response, json_parser_get_root (parser));
+      if (json_reader_read_member (response, "failed"))
         failed = TRUE;
+      json_reader_end_member (response);
 
       if (!failed) {
-
         g_free (poll->ts);
-        poll->ts = g_strdup_printf ("%li", json_value_find (parsed, "ts")->u.integer);
+        json_reader_read_member (response, "ts");
+        poll->ts = g_strdup_printf ("%li", json_reader_get_int_value (response));
+        json_reader_end_member (response);
 
-        updates = json_value_find (parsed, "updates");
-        if (updates->u.array.length == 0) {
+        json_reader_read_member (response, "updates");
+        gint count = json_reader_count_elements (response);
+        if (count == 0) {
           g_print ("No events. Sad..\n");
         } else {
           guint i;
-          for (i = 0; i < (guint) updates->u.array.length; i++) {
-            json_value *event = updates->u.array.values[i];
-            event_code = event->u.array.values[0]->u.integer;
+          for (i = 0; i < count; i++) {
+            json_reader_read_element (response, i);
+            json_reader_read_element (response, 0);
+            event_code = json_reader_get_int_value (response);
             /*
-             0,$message_id,0 -- удаление сообщения с указанным local_id
-             1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
-             2,$message_id,$mask[,$user_id] -- установка флагов сообщения (FLAGS|=$mask)
-             3,$message_id,$mask[,$user_id] -- сброс флагов сообщения (FLAGS&=~$mask)
-             4,$message_id,$flags,$from_id,$timestamp,$subject,$text,$attachments -- добавление нового сообщения
-             8,-$user_id,0 -- друг $user_id стал онлайн
-             9,-$user_id,$flags -- друг $user_id стал оффлайн ($flags равен 0, если пользователь покинул сайт (например, нажал выход) и 1, если оффлайн по таймауту (например, статус away))
-
-
-             51,$chat_id,$self -- один из параметров (состав, тема) беседы $chat_id были изменены. $self - были ли изменения вызываны самим пользователем
-             61,$user_id,$flags -- пользователь $user_id начал набирать текст в диалоге. событие должно приходить раз в ~5 секунд при постоянном наборе текста. $flags = 1
-             62,$user_id,$chat_id -- пользователь $user_id начал набирать текст в беседе $chat_id.
-             70,$user_id,$call_id -- пользователь $user_id совершил звонок имеющий идентификатор $call_id, дополнительную информацию о звонке можно получить используя метод voip.getCallInfo.*/
-
+             * 0,$message_id,0 -- удаление сообщения с указанным local_id
+             * 1,$message_id,$flags -- замена флагов сообщения (FLAGS:=$flags)
+             * 2,$message_id,$mask[,$user_id] -- установка флагов сообщения (FLAGS|=$mask)
+             * 3,$message_id,$mask[,$user_id] -- сброс флагов сообщения (FLAGS&=~$mask)
+             * 4,$message_id,$flags,$from_id,$timestamp,$subject,$text,$attachments -- добавление нового сообщения
+             * 8,-$user_id,0 -- друг $user_id стал онлайн
+             * 9,-$user_id,$flags -- друг $user_id стал оффлайн ($flags равен 0, если пользователь покинул сайт (например, нажал выход) и 1, если оффлайн по таймауту (например, статус away))
+             * 51,$chat_id,$self -- один из параметров (состав, тема) беседы $chat_id были изменены. $self - были ли изменения вызываны самим пользователем
+             * 61,$user_id,$flags -- пользователь $user_id начал набирать текст в диалоге. событие должно приходить раз в ~5 секунд при постоянном наборе текста. $flags = 1
+             * 62,$user_id,$chat_id -- пользователь $user_id начал набирать текст в беседе $chat_id.
+             * 70,$user_id,$call_id -- пользователь $user_id совершил звонок имеющий идентификатор $call_id, дополнительную информацию о звонке можно получить используя метод voip.getCallInfo.
+             */
             switch (event_code) {
               case 0:
                 g_print ("someone deleted the msg, ");
@@ -434,19 +444,16 @@ polling (const gpointer data)
                 g_print ("someone added the msg, ");
                 break;
               case 8:
-                user_id = event->u.array.values[1]->u.integer * (-1);
-                g_print ("%i is online!\n", user_id);
+                g_print ("someone is online!\n");
                 break;
               case 9:
-                user_id = event->u.array.values[1]->u.integer * (-1);
-                g_print ("%i is offline!\n", user_id);
+                g_print ("someone is offline!\n");
                 break;
               case 51:
                 g_print ("someone changed the chat params, ");
                 break;
               case 61:
-                user_id = event->u.array.values[1]->u.integer;
-                g_print ("%i started to type a msg!\n", user_id);
+                g_print ("someone started to type a msg!\n");
                 break;
               case 62:
                 g_print ("someone started to type a msg (again), ");
@@ -460,32 +467,31 @@ polling (const gpointer data)
               default:
                 g_print ("meteorite%i?, ", event_code);
             }
+            json_reader_end_element (response);
+            json_reader_end_element (response);
           }
         }
       }
-      json_value_free (parsed);
+      g_object_unref (response);
     }
-
   }
 
   /* Set offline status at disconnect
    * https://vk.com/dev/account.setOffline */
-  if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOffline", &parsed, &resterror, NULL)) {
+  if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOffline", response, &resterror, NULL)) {
     //TODO: error handle
     g_error ("Method account.setOffline returned %i, %s", resterror->code, resterror->message);
     return FALSE;
   }
 
-  response = json_value_find (parsed, "response");
-
-  if (response->u.integer == 1)
+  if (json_reader_get_int_value (response) == 1)
     tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
                                       TP_CONNECTION_STATUS_REASON_REQUESTED);
   else
     tp_base_connection_change_status (poll->conn, TP_CONNECTION_STATUS_DISCONNECTED,
                                       TP_CONNECTION_STATUS_REASON_NETWORK_ERROR);
 
-  json_value_free (parsed);
+  g_object_unref (response);
 
   g_thread_exit (NULL);
   return TRUE;
@@ -517,7 +523,7 @@ start_connecting (TpBaseConnection *conn,
   if (!self->priv->token) {
     RestProxy *rest = rest_proxy_new ("https://oauth.vk.com/", FALSE);
     RestProxyCall *call = rest_proxy_new_call (rest);
-    rest_proxy_call_set_function (call, "token");
+    rest_proxy_call_set_function (call, "access_token");
     rest_proxy_call_set_method (call, "GET");
     rest_proxy_call_add_params (call,
                                 "grant_type", "password",
@@ -525,7 +531,7 @@ start_connecting (TpBaseConnection *conn,
                                 "client_secret", APP_SECRET,
                                 "username", self->priv->account,
                                 "password", self->priv->password,
-                                "v", "5.3",
+                                "v", API_VER,
                                 NULL);
     if (!rest_proxy_call_sync (call, &resterror)) {
       g_error ("Cannot make call: %s", resterror->message);
@@ -545,40 +551,61 @@ start_connecting (TpBaseConnection *conn,
     g_print ("Auth: %s\n", ret);
 #endif
 
-    json_value *response = json_parse (ret, strlen (ret));
     g_object_unref (call);
     g_object_unref (rest);
-
-    g_assert (response->type == json_object);
+    JsonParser *parser = json_parser_new ();
+    if (!json_parser_load_from_data (parser, ret, -1, NULL))
+      return -1;
 
     if (resterror)
       g_error_free (resterror);
 
-    if (json_value_find (response, "access_token"))
-      self->priv->token = g_strdup (json_value_find (response, "access_token")->u.string.ptr);
-    else {
-      json_value *l_error = json_value_find (response, "error");
-      resterror = g_error_new (1, json_value_find (l_error, "error_code")->u.integer, "%s",
-                               json_value_find (l_error, "error_msg")->u.string.ptr);
-      return resterror->code;
+    gint err_code = 0;
+    gchar *err_msg = NULL;
+
+    JsonReader *reader = json_reader_new (NULL);
+    json_reader_set_root (reader, json_parser_get_root (parser));
+    if (json_reader_read_member (reader, "access_token")) {
+      self->priv->token = g_strdup (json_reader_get_string_value (reader));
+    } else {
+      json_reader_end_member (reader);
+      if (json_reader_read_member (reader, "error")) {
+        json_reader_read_member (reader, "error_code");
+        err_code = json_reader_get_int_value (reader);
+        json_reader_end_member (reader);
+        json_reader_read_member (reader, "error_msg");
+        err_msg = json_reader_get_string_value (reader);
+        json_reader_end_member (reader);
+        resterror = g_error_new (1, err_code, "%s",
+                                 err_msg);
+        return resterror->code;
+      } else {
+        return -1;
+      }
     }
   }
 
   self->priv->rest = rest_proxy_new ("https://api.vk.com/method/", FALSE);
 
-  json_value *parsed = NULL;
+  JsonReader *response = NULL;
 
-  if (invoke_vk_api (self, "users.get", &parsed, &err, "fields", "photo_100", NULL) != 0) {
+  if (invoke_vk_api (self, "users.get", response, &err, "fields", "photo_100", NULL) != 0) {
     //TODO: error handle
     g_error ("Method users.get returned code %i, %s", err->code, err->message);
   }
-  json_value *response = json_value_find (parsed, "response");
+
 #ifdef ENABLE_DEBUG
-  g_print ("Hi, %s %s!\n", json_value_find (response->u.array.values[0], "first_name")->u.string.ptr,
-           json_value_find (response->u.array.values[0], "last_name")->u.string.ptr);
+  g_print ("Hi, ");
+  json_reader_read_element (response, 0);
+  json_reader_read_member (response, "first_name");
+  g_print ("%s ", json_reader_get_string_value (response));
+  json_reader_end_member (response);
+  json_reader_read_member (response, "last_name");
+  g_print ("%s!\n", json_reader_get_string_value (response));
+  json_reader_end_member (response);
 #endif
 
-  json_value_free (parsed);
+  g_object_unref (response);
 
   self->priv->data = g_slice_new (PollData);
   PollData *poll = self->priv->data;

@@ -3,7 +3,7 @@
 
 #include <glib-object.h>
 #include <telepathy-glib/telepathy-glib.h>
-#include <json.h>
+#include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
 
@@ -48,7 +48,7 @@ G_BEGIN_DECLS
   gint
   invoke_vk_api (DurkaConnection *self,
                  const gchar *method,
-                 json_value **response,
+                 JsonReader *response,
                  GError **error,
                  ...);
 
