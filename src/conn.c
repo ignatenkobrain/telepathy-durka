@@ -241,7 +241,7 @@ create_channel_managers (TpBaseConnection *conn)
 gint
 invoke_vk_api (DurkaConnection *self,
                const gchar *method,
-               JsonReader *reader,
+               JsonReader **reader,
                GError **error,
                ...)
 {
@@ -285,25 +285,25 @@ invoke_vk_api (DurkaConnection *self,
   if (json_parser_load_from_data (parser, ret, -1, NULL)) {
     if (*error)
       g_error_free (*error);
-    reader = json_reader_new (NULL);
-    json_reader_set_root (reader, json_parser_get_root (parser));
-    if (json_reader_read_member (reader, "error")) {
-      json_reader_read_member (reader, "error_code");
-      err_code = json_reader_get_int_value (reader);
-      json_reader_end_member (reader);
-      json_reader_read_member (reader, "error_msg");
-      err_msg = g_strdup (json_reader_get_string_value (reader));
-      json_reader_end_member (reader);
+    *reader = json_reader_new (NULL);
+    json_reader_set_root (*reader, json_parser_get_root (parser));
+    if (json_reader_read_member (*reader, "error")) {
+      json_reader_read_member (*reader, "error_code");
+      err_code = json_reader_get_int_value (*reader);
+      json_reader_end_member (*reader);
+      json_reader_read_member (*reader, "error_msg");
+      err_msg = g_strdup (json_reader_get_string_value (*reader));
+      json_reader_end_member (*reader);
       *error = g_error_new (1, err_code, "%s",
                             err_msg);
       return (*error)->code;
     } else {
-      json_reader_end_member (reader);
+      json_reader_end_member (*reader);
     }
-    if (json_reader_read_member (reader, "response")) {
+    if (json_reader_read_member (*reader, "response")) {
       return 0;
     } else {
-      json_reader_end_member (reader);
+      json_reader_end_member (*reader);
     }
   }
 
@@ -328,7 +328,7 @@ polling (const gpointer data)
     if (failed) {
       /* Getting data required for connection to a Long Poll server
        * https://vk.com/dev/messages.getLongPollServer */
-      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "messages.getLongPollServer", response, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "messages.getLongPollServer", &response, &resterror, NULL)) {
         //TODO: error handle
         g_error ("Method messages.getLongPollServer returned %i, %s", resterror->code, resterror->message);
         return FALSE;
@@ -355,7 +355,7 @@ polling (const gpointer data)
      * https://vk.com/dev/account.setOnline */
     if (g_timer_elapsed (poll->timer, NULL) >= 840 || first_time) {
       first_time = FALSE;
-      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOnline", response, &resterror, NULL)) {
+      if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOnline", &response, &resterror, NULL)) {
         //TODO: error handle
         g_error ("Method account.setOnline returned %i, %s", resterror->code, resterror->message);
         return FALSE;
@@ -478,7 +478,7 @@ polling (const gpointer data)
 
   /* Set offline status at disconnect
    * https://vk.com/dev/account.setOffline */
-  if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOffline", response, &resterror, NULL)) {
+  if (invoke_vk_api (DURKA_CONNECTION (poll->conn), "account.setOffline", &response, &resterror, NULL)) {
     //TODO: error handle
     g_error ("Method account.setOffline returned %i, %s", resterror->code, resterror->message);
     return FALSE;
@@ -589,7 +589,7 @@ start_connecting (TpBaseConnection *conn,
 
   JsonReader *response = NULL;
 
-  if (invoke_vk_api (self, "users.get", response, &err, "fields", "photo_100", NULL) != 0) {
+  if (invoke_vk_api (self, "users.get", &response, &err, "fields", "photo_100", NULL) != 0) {
     //TODO: error handle
     g_error ("Method users.get returned code %i, %s", err->code, err->message);
   }

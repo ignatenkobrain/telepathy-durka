@@ -48,7 +48,7 @@ G_BEGIN_DECLS
   gint
   invoke_vk_api (DurkaConnection *self,
                  const gchar *method,
-                 JsonReader *response,
+                 JsonReader **response,
                  GError **error,
                  ...);
 
