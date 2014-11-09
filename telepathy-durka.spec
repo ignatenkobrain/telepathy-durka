@@ -1,5 +1,5 @@
 Name:           telepathy-durka
-Version:        0.0.1
+Version:        0.0.0.1
 Release:        1%{?dist}
 Summary:        VK Connection Manager for Telepathy
 
@@ -35,5 +35,5 @@ make %{?_smp_mflags}
 %{_datadir}/telepathy/managers/*.manager
 
 %changelog
-* Sun Nov 09 2014 Igor Gnatenko <i.gnatenko.brain@gmail.com> - 0.0.1-1
+* Sun Nov 09 2014 Igor Gnatenko <i.gnatenko.brain@gmail.com> - 0.0.0.1-1
 - Initial packaging
