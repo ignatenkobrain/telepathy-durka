@@ -6,20 +6,25 @@ VK Connection Manager for Telepathy.
 Build requirements
 ------------------
 
-* automake
-* make
+* libtool
+* autoconf
 * glib2-devel
-* telepathy-glib-devel
-* dbus-devel dbus-glib-devel
-* libxml2-devel
 * json-glib-devel
+* telepathy-glib-devel
+* dbus-glib-devel
+* dbus-devel
+* rest-devel
+* libxml2-devel
 
 Requirements
 ------------
 
+* glib2
 * libxml2
+* rest
 * telepathy-glib
-* dbus dbus-glib
+* dbus
+* dbus-glib
 * json-glib
 
 How to install
@@ -32,15 +37,20 @@ $ make
 # make install
 ```
 
+Using tito to build rpm (git version)
+-------------------------------------
+$ tito build --test --rpm --builder mock --arg mock=fedora-rawhide-x86_64
+
 How to use
 ----------
 
-1. /usr/libexec/telepathy-durka
-2. Open empathy-accounts or gnome-online-accounts
-3. Add vk account
+1. `export DURKA_PERSIST=1` (otherwise telepathy-durka will close immediately if started not via dbus)
+2. `/usr/libexec/telepathy-durka`
+3. Open empathy-accounts or gnome-online-accounts or ktp or whatever
+4. Add vk account
 
-Token authorize
----------------
+Token authorize (not recommended)
+---------------------------------
 
 At adding account use wrong password.
 
