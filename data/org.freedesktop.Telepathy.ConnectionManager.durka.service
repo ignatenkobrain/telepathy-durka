@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=org.freedesktop.Telepathy.ConnectionManager.durka
-Exec=@DURKA_TELEPATHY_EXEC@
