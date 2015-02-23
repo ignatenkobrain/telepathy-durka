@@ -6,35 +6,22 @@ VK Connection Manager for Telepathy.
 Build requirements
 ------------------
 
-* libtool
-* autoconf
+* meson
 * glib2-devel
 * json-glib-devel
 * telepathy-glib-devel
 * dbus-glib-devel
-* dbus-devel
 * rest-devel
-* libxml2-devel
 
-Requirements
-------------
-
-* glib2
-* libxml2
-* rest
-* telepathy-glib
-* dbus
-* dbus-glib
-* json-glib
-
-How to install
---------------
+How to build and install
+------------------------
 
 ```
-$ ./autogen.sh
-$ ./configure
-$ make
-# make install
+$ mkdir build
+$ cd build
+$ meson ..
+$ ninja-build
+# ninja-build install
 ```
 
 Using tito to build rpm (git version)

@@ -1,0 +1,11 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#define VERSION "@VERSION@"
+#mesondefine ENABLE_DEBUG
+
+#define APP_ID "@APP_ID@"
+#define APP_SECRET "@APP_SECRET@"
+#define API_VER "@API_VER@"
+
+#endif /* CONFIG_H */
