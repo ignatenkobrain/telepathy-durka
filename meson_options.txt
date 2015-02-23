@@ -1,0 +1,3 @@
+option('libexecdir', type : 'string', value : 'libexec', description : 'Libexec directory')
+option('telepathymanagersdir', type : 'string', value : 'share/telepathy/managers', description : 'Telepathy Managers directory')
+option('dbusservicesdir', type : 'string', value : 'share/dbus-1/services', description : 'D-Bus Services directory')

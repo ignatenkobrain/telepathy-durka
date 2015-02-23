@@ -18,10 +18,11 @@ libdurka = static_library('durka',
                           dependencies : [dbus, glib, json, rest, telepathy],
                           install : false)
 
+libexecdir = get_option('libexecdir')
 executable('telepathy-durka',
            'durka-main.c',
            include_directories : include_directories('.'),
            dependencies : telepathy,
            link_with : libdurka,
            install : true,
-           install_dir : 'libexec')
+           install_dir : libexecdir)
