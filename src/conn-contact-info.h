@@ -8,7 +8,7 @@
 #ifndef CONN_CONTACT_INFO_H_
 #define CONN_CONTACT_INFO_H_
 
-#include "conn.h"
+#include "durka-connection.h"
 
 G_BEGIN_DECLS
 

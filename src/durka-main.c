@@ -1,7 +1,5 @@
-#include <telepathy-glib/telepathy-glib.h>
-
 #include "config.h"
-#include "connection-manager.h"
+#include "durka-connection-manager.h"
 
 static TpBaseConnectionManager *
 construct_cm (void)
@@ -27,6 +25,4 @@ main (int    argc,
 #endif
 
   return tp_run_connection_manager ("telepathy-durka", VERSION, construct_cm, argc, argv);
-
-  return 0;
 }

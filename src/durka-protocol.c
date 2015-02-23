@@ -1,28 +1,37 @@
-#include "config.h"
+/* durka-protocol.c
+ *
+ * Copyright (C) 2015 Igor Gnatenko <i.gnatenko.brain@gmail.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-#include "protocol.h"
-
-#include <telepathy-glib/telepathy-glib.h>
-
-#include "conn.h"
-#include "contact-list.h"
+#include "durka-connection.h"
+#include "durka-contact-list.h"
+#include "durka-protocol.h"
 
 G_DEFINE_TYPE (DurkaProtocol, durka_protocol, TP_TYPE_BASE_PROTOCOL)
 
-static void
-durka_protocol_init (DurkaProtocol *self)
-{
-}
-
 gboolean
-durka_protocol_check_contact_id (const gchar *id,
-                                 gchar **normal,
-                                 GError **error)
+durka_protocol_check_contact_id (const gchar  *id,
+                                 gchar       **normal,
+                                 GError      **error)
 {
   g_return_val_if_fail (id != NULL, FALSE);
 
   if (id[0] == '\0') {
-    g_set_error (error, TP_ERROR, TP_ERROR_INVALID_HANDLE, "ID must not be empty");
+    g_set_error (error, TP_ERROR, TP_ERROR_INVALID_HANDLE,
+                 "ID must not be empty");
     return FALSE;
   }
 
@@ -33,9 +42,9 @@ durka_protocol_check_contact_id (const gchar *id,
 }
 
 static gboolean
-account_param_filter (const TpCMParamSpec *paramspec,
-                      GValue *value,
-                      GError **error)
+account_param_filter (const TpCMParamSpec  *paramspec,
+                      GValue               *value,
+                      GError              **error)
 {
   const gchar *id = g_value_get_string (value);
 
@@ -74,9 +83,9 @@ get_parameters (TpBaseProtocol *self)
 }
 
 static TpBaseConnection *
-new_connection (TpBaseProtocol *protocol,
-                GHashTable *asv,
-                GError **error)
+new_connection (TpBaseProtocol  *protocol,
+                GHashTable      *asv,
+                GError         **error)
 {
   DurkaConnection *conn;
   const gchar *account;
@@ -89,20 +98,21 @@ new_connection (TpBaseProtocol *protocol,
   /* telepathy-glib checked this for us */
   g_assert (account != NULL);
 
-  conn = DURKA_CONNECTION (g_object_new (DURKA_TYPE_CONNECTION,
-                                         "account", account,
-                                         "protocol", tp_base_protocol_get_name (protocol),
-                                         "password", password,
-                                         "token", token,
-                                         NULL));
+  conn = DURKA_CONNECTION (
+      g_object_new (DURKA_TYPE_CONNECTION,
+                    "account", account,
+                    "protocol", tp_base_protocol_get_name (protocol),
+                    "password", password,
+                    "token", token,
+                    NULL));
 
   return (TpBaseConnection *) conn;
 }
 
 static gchar *
-normalize_contact (TpBaseProtocol *self G_GNUC_UNUSED,
-                   const gchar *contact,
-                   GError **error)
+normalize_contact (TpBaseProtocol  *self G_GNUC_UNUSED,
+                   const gchar     *contact,
+                   GError         **error)
 {
   gchar *normal;
 
@@ -113,26 +123,27 @@ normalize_contact (TpBaseProtocol *self G_GNUC_UNUSED,
 }
 
 static gchar *
-identify_account (TpBaseProtocol *self G_GNUC_UNUSED,
-                  GHashTable *asv,
-                  GError **error)
+identify_account (TpBaseProtocol  *self G_GNUC_UNUSED,
+                  GHashTable      *asv,
+                  GError         **error)
 {
   const gchar *account = tp_asv_get_string (asv, "account");
 
   if (account != NULL)
     return normalize_contact (self, account, error);
 
-  g_set_error (error, TP_ERROR, TP_ERROR_INVALID_ARGUMENT, "'account' parameter not given");
+  g_set_error (error, TP_ERROR, TP_ERROR_INVALID_ARGUMENT,
+               "'account' parameter not given");
   return NULL;
 }
 
 static void
-get_connection_details (TpBaseProtocol *self G_GNUC_UNUSED,
-                        GStrv *connection_interfaces,
-                        GType **channel_managers,
-                        gchar **icon_name,
-                        gchar **english_name,
-                        gchar **vcard_field)
+get_connection_details (TpBaseProtocol  *self G_GNUC_UNUSED,
+                        GStrv           *connection_interfaces,
+                        GType          **channel_managers,
+                        gchar          **icon_name,
+                        gchar          **english_name,
+                        gchar          **vcard_field)
 {
   if (connection_interfaces != NULL) {
     *connection_interfaces = g_strdupv ((GStrv) durka_connection_get_implemented_interfaces ());
@@ -167,3 +178,7 @@ durka_protocol_class_init (DurkaProtocolClass *klass)
   base_class->get_connection_details = get_connection_details;
 }
 
+static void
+durka_protocol_init (DurkaProtocol *self)
+{
+}

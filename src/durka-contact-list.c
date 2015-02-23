@@ -1,12 +1,22 @@
-#include "config.h"
+/* durka-contact-list.c
+ *
+ * Copyright (C) 2015 Igor Gnatenko <i.gnatenko.brain@gmail.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-#include "contact-list.h"
-
-#include <string.h>
-
-#include <dbus/dbus-glib.h>
-
-#include <telepathy-glib/telepathy-glib.h>
+#include "durka-contact-list.h"
 
 /* this array must be kept in sync with the enum
  * DurkaContactListPresence in contact-list.h */
@@ -17,6 +27,39 @@ static const TpPresenceStatusSpec _statuses[] = {
       { "away", TP_CONNECTION_PRESENCE_TYPE_AWAY, TRUE, NULL },
       { "available", TP_CONNECTION_PRESENCE_TYPE_AVAILABLE, TRUE, NULL },
       { NULL }
+};
+
+struct _DurkaContactListPrivate
+{
+  TpBaseConnection *conn;
+  guint simulation_delay;
+  TpHandleRepoIface *contact_repo;
+
+  /* g_strdup (group name) => the same pointer */
+  GHashTable *all_tags;
+
+  /* All contacts on our (fake) protocol-level contact list,
+   * plus all contacts in publish_requests or cancelled_publish_requests */
+  TpHandleSet *contacts;
+
+  /* All contacts on our (fake) protocol-level contact list
+   * GUINT_TO_POINTER (handle borrowed from contacts)
+   *    => DurkaContactDetails */
+  GHashTable *contact_details;
+
+  /* Contacts with an outstanding request for presence publication
+   * (may or may not be in contact_details)
+   * handle borrowed from contacts => g_strdup (message) */
+  GHashTable *publish_requests;
+
+  /* Contacts who have requested presence but then cancelled their request
+   * (may or may not be in contact_details) */
+  TpHandleSet *cancelled_publish_requests;
+
+  TpHandleSet *blocked_contacts;
+
+  gulong status_changed_id;
+
 };
 
 const TpPresenceStatusSpec *
@@ -64,11 +107,18 @@ contact_group_list_iface_init (TpContactGroupListInterface *);
 static void
 mutable_contact_group_list_iface_init (TpMutableContactGroupListInterface *);
 
-G_DEFINE_TYPE_WITH_CODE (
-    DurkaContactList,
+G_DEFINE_TYPE_WITH_CODE (DurkaContactList,
     durka_contact_list,
     TP_TYPE_BASE_CONTACT_LIST,
-    G_IMPLEMENT_INTERFACE (TP_TYPE_BLOCKABLE_CONTACT_LIST, blockable_contact_list_iface_init); G_IMPLEMENT_INTERFACE (TP_TYPE_CONTACT_GROUP_LIST, contact_group_list_iface_init); G_IMPLEMENT_INTERFACE (TP_TYPE_MUTABLE_CONTACT_GROUP_LIST, mutable_contact_group_list_iface_init); G_IMPLEMENT_INTERFACE (TP_TYPE_MUTABLE_CONTACT_LIST, mutable_contact_list_iface_init))
+    G_IMPLEMENT_INTERFACE (TP_TYPE_BLOCKABLE_CONTACT_LIST,
+        blockable_contact_list_iface_init);
+    G_IMPLEMENT_INTERFACE (TP_TYPE_CONTACT_GROUP_LIST,
+        contact_group_list_iface_init);
+    G_IMPLEMENT_INTERFACE (TP_TYPE_MUTABLE_CONTACT_GROUP_LIST,
+        mutable_contact_group_list_iface_init);
+    G_IMPLEMENT_INTERFACE (TP_TYPE_MUTABLE_CONTACT_LIST,
+        mutable_contact_list_iface_init)
+)
 
 enum {
   ALIAS_UPDATED,
@@ -79,56 +129,57 @@ enum {
 static guint signals[N_SIGNALS] = {0};
 
 enum {
-  PROP_SIMULATION_DELAY = 1,
-  N_PROPS
+  PROP_0,
+  PROP_SIMULATION_DELAY,
+  LAST_PROP
 };
 
-struct _DurkaContactListPrivate {
-  TpBaseConnection *conn;
-  guint simulation_delay;
-  TpHandleRepoIface *contact_repo;
-
-  /* g_strdup (group name) => the same pointer */
-  GHashTable *all_tags;
-
-  /* All contacts on our (fake) protocol-level contact list,
-   * plus all contacts in publish_requests or cancelled_publish_requests */
-  TpHandleSet *contacts;
-
-  /* All contacts on our (fake) protocol-level contact list
-   * GUINT_TO_POINTER (handle borrowed from contacts)
-   *    => DurkaContactDetails */
-  GHashTable *contact_details;
-
-  /* Contacts with an outstanding request for presence publication
-   * (may or may not be in contact_details)
-   * handle borrowed from contacts => g_strdup (message) */
-  GHashTable *publish_requests;
-
-  /* Contacts who have requested presence but then cancelled their request
-   * (may or may not be in contact_details) */
-  TpHandleSet *cancelled_publish_requests;
-
-  TpHandleSet *blocked_contacts;
-
-  gulong status_changed_id;
-};
+static GParamSpec *gParamSpecs [LAST_PROP];
 
 static void
-durka_contact_list_init (DurkaContactList *self)
+durka_contact_list_finalize (GObject *object)
 {
-  self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, DURKA_TYPE_CONTACT_LIST, DurkaContactListPrivate);
+  DurkaContactListPrivate *priv = DURKA_CONTACT_LIST (object)->priv;
 
-  self->priv->contact_details = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
-                                                       durka_contact_details_destroy);
-  self->priv->publish_requests = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
-  self->priv->all_tags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  G_OBJECT_CLASS (durka_contact_list_parent_class)->finalize (object);
+}
 
-  /* initialized properly in constructed () */
-  self->priv->contact_repo = NULL;
-  self->priv->contacts = NULL;
-  self->priv->blocked_contacts = NULL;
-  self->priv->cancelled_publish_requests = NULL;
+static void
+durka_contact_list_get_property (GObject    *object,
+                                 guint       prop_id,
+                                 GValue     *value,
+                                 GParamSpec *pspec)
+{
+  DurkaContactList *self = DURKA_CONTACT_LIST (object);
+
+  switch (prop_id)
+    {
+    case PROP_SIMULATION_DELAY:
+      g_value_set_uint (value, self->priv->simulation_delay);
+      break;
+
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+durka_contact_list_set_property (GObject      *object,
+                                 guint         prop_id,
+                                 const GValue *value,
+                                 GParamSpec   *pspec)
+{
+  DurkaContactList *self = DURKA_CONTACT_LIST (object);
+
+  switch (prop_id)
+    {
+    case PROP_SIMULATION_DELAY:
+      self->priv->simulation_delay = g_value_get_uint (value);
+      break;
+
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
 }
 
 static void
@@ -150,49 +201,13 @@ durka_contact_list_close_all (DurkaContactList *self)
 }
 
 static void
-dispose (GObject *object)
+durka_contact_list_dispose (GObject *object)
 {
   DurkaContactList *self = DURKA_CONTACT_LIST (object);
 
   durka_contact_list_close_all (self);
 
   ((GObjectClass *) durka_contact_list_parent_class)->dispose (object);
-}
-
-static void
-get_property (GObject *object,
-              guint property_id,
-              GValue *value,
-              GParamSpec *pspec)
-{
-  DurkaContactList *self = DURKA_CONTACT_LIST (object);
-
-  switch (property_id) {
-    case PROP_SIMULATION_DELAY:
-      g_value_set_uint (value, self->priv->simulation_delay);
-      break;
-
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-  }
-}
-
-static void
-set_property (GObject *object,
-              guint property_id,
-              const GValue *value,
-              GParamSpec *pspec)
-{
-  DurkaContactList *self = DURKA_CONTACT_LIST (object);
-
-  switch (property_id) {
-    case PROP_SIMULATION_DELAY:
-      self->priv->simulation_delay = g_value_get_uint (value);
-      break;
-
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-  }
 }
 
 static DurkaContactDetails *
@@ -463,7 +478,7 @@ status_changed_cb (TpBaseConnection *conn,
 }
 
 static void
-constructed (GObject *object)
+durka_contact_list_constructed (GObject *object)
 {
   DurkaContactList *self = DURKA_CONTACT_LIST (object);
   void
@@ -1465,46 +1480,6 @@ durka_contact_list_rename_group_async (TpBaseContactList *contact_list,
 }
 
 static void
-durka_contact_list_class_init (DurkaContactListClass *klass)
-{
-  TpBaseContactListClass *contact_list_class = (TpBaseContactListClass *) klass;
-  GObjectClass *object_class = (GObjectClass *) klass;
-
-  object_class->constructed = constructed;
-  object_class->dispose = dispose;
-  object_class->get_property = get_property;
-  object_class->set_property = set_property;
-
-  g_object_class_install_property (
-      object_class,
-      PROP_SIMULATION_DELAY,
-      g_param_spec_uint ("simulation-delay", "Simulation delay", "Delay between simulated network events", 0,
-                         G_MAXUINT32, 1000,
-                         G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-  contact_list_class->dup_contacts = durka_contact_list_dup_contacts;
-  contact_list_class->dup_states = durka_contact_list_dup_states;
-  /* for this durka CM we pretend there is a server-stored contact list,
-   * like in XMPP, even though there obviously isn't really */
-  contact_list_class->get_contact_list_persists = tp_base_contact_list_true_func;
-
-  g_type_class_add_private (klass, sizeof (DurkaContactListPrivate));
-
-  signals[ALIAS_UPDATED] = g_signal_new ("alias-updated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0,
-                                         NULL,
-                                         NULL,
-                                         NULL,
-                                         G_TYPE_NONE, 1, G_TYPE_UINT);
-
-  signals[PRESENCE_UPDATED] = g_signal_new ("presence-updated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                                            0,
-                                            NULL,
-                                            NULL,
-                                            NULL,
-                                            G_TYPE_NONE, 1, G_TYPE_UINT);
-}
-
-static void
 mutable_contact_list_iface_init (TpMutableContactListInterface *iface)
 {
   iface->can_change_contact_list = tp_base_contact_list_true_func;
@@ -1547,3 +1522,63 @@ mutable_contact_group_list_iface_init (TpMutableContactGroupListInterface *iface
   iface->get_group_storage = durka_contact_list_get_group_storage;
 }
 
+static void
+durka_contact_list_class_init (DurkaContactListClass *klass)
+{
+  TpBaseContactListClass *contact_list_class = (TpBaseContactListClass *) klass;
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->constructed = durka_contact_list_constructed;
+  object_class->dispose = durka_contact_list_dispose;
+  object_class->get_property = durka_contact_list_get_property;
+  object_class->set_property = durka_contact_list_set_property;
+
+  gParamSpecs [PROP_SIMULATION_DELAY] =
+    g_param_spec_uint ("simulation-delay",
+                       "Simulation delay",
+                       "Delay between simulated network events",
+                       0, G_MAXUINT32, 1000,
+                       (G_PARAM_CONSTRUCT_ONLY |
+                        G_PARAM_READWRITE |
+                        G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (object_class, PROP_SIMULATION_DELAY,
+                                   gParamSpecs [PROP_SIMULATION_DELAY]);
+
+  contact_list_class->dup_contacts = durka_contact_list_dup_contacts;
+  contact_list_class->dup_states = durka_contact_list_dup_states;
+  /* for this durka CM we pretend there is a server-stored contact list,
+   * like in XMPP, even though there obviously isn't really */
+  contact_list_class->get_contact_list_persists = tp_base_contact_list_true_func;
+
+  g_type_class_add_private (klass, sizeof (DurkaContactListPrivate));
+
+  signals[ALIAS_UPDATED] = g_signal_new ("alias-updated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0,
+                                         NULL,
+                                         NULL,
+                                         NULL,
+                                         G_TYPE_NONE, 1, G_TYPE_UINT);
+
+  signals[PRESENCE_UPDATED] = g_signal_new ("presence-updated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                                            0,
+                                            NULL,
+                                            NULL,
+                                            NULL,
+                                            G_TYPE_NONE, 1, G_TYPE_UINT);
+}
+
+static void
+durka_contact_list_init (DurkaContactList *self)
+{
+  self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, DURKA_TYPE_CONTACT_LIST, DurkaContactListPrivate);
+
+  self->priv->contact_details = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
+                                                       durka_contact_details_destroy);
+  self->priv->publish_requests = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
+  self->priv->all_tags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
+  /* initialized properly in constructed () */
+  self->priv->contact_repo = NULL;
+  self->priv->contacts = NULL;
+  self->priv->blocked_contacts = NULL;
+  self->priv->cancelled_publish_requests = NULL;
+}
