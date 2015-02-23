@@ -6,7 +6,8 @@
 static TpBaseConnectionManager *
 construct_cm (void)
 {
-  return (TpBaseConnectionManager *) g_object_new (DURKA_TYPE_CONNECTION_MANAGER, NULL);
+  return (TpBaseConnectionManager *) g_object_new (
+      DURKA_TYPE_CONNECTION_MANAGER, NULL);
 }
 
 int
