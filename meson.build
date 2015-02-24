@@ -9,7 +9,7 @@ else
 endif
 conf_data.set('APP_ID', '"3821026"')
 conf_data.set('APP_SECRET', '"ct9vuyd9UNYXddZF6o46"')
-conf_data.set('API_VER', '"5.25"')
+conf_data.set('API_VER', '"5.28"')
 
 prefix = get_option('prefix')
 
