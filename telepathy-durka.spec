@@ -23,17 +23,17 @@ mkdir build
 
 %build
 pushd build
-  meson ..
-  ninja-build
+  meson .. --prefix=%{_prefix}
+  ninja-build -v
 popd
 
 %install
 pushd build
-  ninja-build install
+  DESTDIR=%{buildroot} ninja-build -v install
 popd
 
 %files
-%doc AUTHORS COPYING NEWS
+%doc AUTHORS COPYING
 %{_libexecdir}/%{name}
 %{_datadir}/dbus-1/services/*.service
 %{_datadir}/telepathy/managers/*.manager
